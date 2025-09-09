@@ -7,6 +7,7 @@ from typing import Iterable, Optional, Tuple
 import pandas as pd
 
 from core.dates import fiscal_year
+from macro.config import load_macro_yaml
 
 
 INTEREST_CATEGORY_KEEP = "INTEREST EXPENSE ON PUBLIC ISSUES"
@@ -146,4 +147,78 @@ def write_interest_diagnostics(
     cy_totals.to_csv(p3, index=False)
     return p1, p2, p3
 
+
+def _load_y_from_interest_by_category(path: Path | str) -> pd.DataFrame:
+    df = pd.read_csv(path, parse_dates=["Record Date"])
+    # y excludes OTHER: sum across SHORT, NB, TIPS
+    keep = df[df["Debt Category"].isin(["SHORT", "NB", "TIPS"])]
+    y = (
+        keep.groupby(["Record Date"], as_index=False)["Interest Expense"].sum()
+        .rename(columns={"Interest Expense": "y"})
+        .sort_values("Record Date")
+    )
+    return y
+
+
+def _load_stocks(path: Path | str) -> pd.DataFrame:
+    df = pd.read_csv(path, parse_dates=["Record Date"])  # expects stock_short, stock_nb, stock_tips
+    df = df.sort_values("Record Date")
+    return df[["Record Date", "stock_short", "stock_nb", "stock_tips"]]
+
+
+def build_calibration_matrix(
+    interest_by_category_path: Path | str = "output/diagnostics/interest_monthly_by_category.csv",
+    stocks_path: Path | str = "output/diagnostics/outstanding_by_bucket_scaled.csv",
+    config_path: Path | str = "input/macro.yaml",
+    window_months: int = 48,
+) -> pd.DataFrame:
+    """
+    Build calibration matrix with columns: Record Date, y, SHORT, NB, TIPS over the last window_months.
+    X columns are stock_k * (rate_k/12) using rates from macro.yaml; y excludes OTHER.
+    """
+    y = _load_y_from_interest_by_category(interest_by_category_path)
+    stocks = _load_stocks(stocks_path)
+
+    # Align by month period to handle month-start vs month-end conventions
+    y["_month"] = y["Record Date"].dt.to_period("M")
+    stocks["_month"] = stocks["Record Date"].dt.to_period("M")
+    stocks = stocks.drop(columns=["Record Date"]).rename(columns={"_month": "_month_stocks"})
+    merged = y.merge(stocks, left_on="_month", right_on="_month_stocks", how="inner")
+    merged = merged.drop(columns=["_month_stocks"]).rename(columns={"_month": "Month"})
+    merged = merged.sort_values("Month").reset_index(drop=True)
+    # Convert period to month-start timestamp for output consistency
+    merged["Record Date"] = merged["Month"].apply(lambda p: p.to_timestamp())
+    if len(merged) == 0:
+        raise ValueError("No overlapping dates between interest and stocks")
+
+    # Take last window
+    merged = merged.tail(window_months).copy()
+
+    # Rates from config (annualized); convert to monthly
+    cfg = load_macro_yaml(config_path)
+    if cfg.rates_constant is None:
+        raise ValueError("rates in macro.yaml must be provided (type: constant)")
+    r_short, r_nb, r_tips = cfg.rates_constant
+    m_short = r_short / 12.0
+    m_nb = r_nb / 12.0
+    m_tips = r_tips / 12.0
+
+    # Build X as monthly interest proxies from stocks
+    merged["SHORT"] = merged["stock_short"] * m_short
+    merged["NB"] = merged["stock_nb"] * m_nb
+    merged["TIPS"] = merged["stock_tips"] * m_tips
+
+    mat = merged[["Record Date", "y", "SHORT", "NB", "TIPS"]].copy()
+
+    # Validations
+    if mat[["y", "SHORT", "NB", "TIPS"]].isna().any().any():
+        raise ValueError("NaNs found in calibration matrix")
+    if mat["NB"].var() <= 0:
+        raise ValueError("NB variance must be > 0 for identifiability")
+
+    # Write artifact
+    out = Path("output/diagnostics/calibration_matrix.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    mat.to_csv(out, index=False)
+    return mat
 
