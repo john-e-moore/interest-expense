@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional, Tuple
 
+import json
 import pandas as pd
+
+from macro.config import load_macro_yaml
 
 
 def _bucket_from_mspd_class(security_class_1_description: str) -> str:
@@ -55,21 +59,6 @@ def build_outstanding_by_bucket_from_mspd(path: str | Path) -> pd.DataFrame:
         raise ValueError(f"Missing column: {col_out}")
     df[col_out] = pd.to_numeric(df[col_out], errors="coerce")
     df = df[df[col_out].notna()].copy()
-
-    # Deduplicate by (Record Date, CUSIP) keeping the most recent (by Issue Date, then Maturity Date)
-    cusip_col = "Security Class 2 Description"
-    if cusip_col in df.columns:
-        df[cusip_col] = df[cusip_col].astype(str)
-        # Treat placeholder strings as missing
-        df[cusip_col] = df[cusip_col].mask(df[cusip_col].str.lower().isin(["", "none", "nan", "null"]))
-        df["Issue Date"] = pd.to_datetime(df.get("Issue Date"), errors="coerce")
-        df["Maturity Date"] = pd.to_datetime(df.get("Maturity Date"), errors="coerce")
-        with_cusip = df[df[cusip_col].notna()].copy()
-        without_cusip = df[df[cusip_col].isna()].copy()
-        with_cusip = with_cusip.sort_values(["Record Date", cusip_col, "Issue Date", "Maturity Date"]).drop_duplicates(
-            subset=["Record Date", cusip_col], keep="last"
-        )
-        df = pd.concat([with_cusip, without_cusip], ignore_index=True)
 
     # Keep only the most recent month overall per CUSIP to avoid double counting across months
     cusip_col = "Security Class 2 Description"
@@ -161,4 +150,84 @@ def write_mspd_processed_detail(
         df = df.sort_values(sort_col, ascending=False)
     df.to_csv(out, index=False)
     return out
+
+
+def _compute_target_rate_from_config(config_path: str | Path) -> Optional[float]:
+    cfg = load_macro_yaml(config_path)
+    if cfg.issuance_default_shares and cfg.rates_constant:
+        s_short, s_nb, s_tips = cfg.issuance_default_shares
+        r_short, r_nb, r_tips = cfg.rates_constant
+        return s_short * r_short + s_nb * r_nb + s_tips * r_tips
+    if cfg.rates_constant:
+        r_short, r_nb, r_tips = cfg.rates_constant
+        return (r_short + r_nb + r_tips) / 3.0
+    return None
+
+
+def scale_stocks_for_calibration(
+    stocks_df: pd.DataFrame,
+    fy_interest_df: pd.DataFrame,
+    *,
+    config_path: str | Path = "input/macro.yaml",
+    r_target: Optional[float] = None,
+    frame: str = "FY",
+    year: Optional[int] = None,
+) -> tuple[pd.DataFrame, float, float]:
+    """
+    Scale stocks uniformly so that implied effective rate ≈ r_target.
+
+    Returns (scaled_df, factor, implied_rate_before).
+    """
+    if r_target is None:
+        r_target = _compute_target_rate_from_config(config_path) or 0.03
+
+    df = stocks_df.copy()
+    df["Record Date"] = pd.to_datetime(df["Record Date"])  # ensure datetime
+    df["total_stock"] = df[["stock_short", "stock_nb", "stock_tips"]].sum(axis=1)
+
+    if frame.upper() == "FY":
+        # Choose FY: prefer max FY present in interest table or infer from latest date
+        fy_series = fy_interest_df.set_index("Fiscal Year")["Interest Expense"]
+        fy_sel = int(fy_series.index.max() if year is None else year)
+        I_target = float(fy_series.loc[fy_sel])
+        fy_mask = df["Record Date"].dt.to_period("Y").dt.year.isin([fy_sel])
+        stock_den = float(df.loc[fy_mask, "total_stock"].mean())
+    else:
+        I_target = float(fy_interest_df.set_index("Fiscal Year")["Interest Expense"].iloc[-1])
+        latest_date = df["Record Date"].max()
+        stock_den = float(df.loc[df["Record Date"] == latest_date, "total_stock"].iloc[0])
+
+    implied_before = I_target / stock_den if stock_den else 0.0
+    factor = I_target / (r_target * stock_den) if (r_target and stock_den) else 1.0
+
+    for c in ("stock_short", "stock_nb", "stock_tips"):
+        df[c] = df[c] * factor
+
+    return df[["Record Date", "stock_short", "stock_nb", "stock_tips"]], factor, implied_before
+
+
+def write_scaled_stocks_diagnostic(
+    df_scaled: pd.DataFrame,
+    factor: float,
+    *,
+    out_csv: str | Path = "output/diagnostics/outstanding_by_bucket_scaled.csv",
+    out_json: str | Path = "output/diagnostics/stock_rescale_report.json",
+    r_target: Optional[float] = None,
+    implied_before: Optional[float] = None,
+    implied_after: Optional[float] = None,
+) -> tuple[Path, Path]:
+    out_csv_p = Path(out_csv)
+    out_csv_p.parent.mkdir(parents=True, exist_ok=True)
+    df_scaled.to_csv(out_csv_p, index=False)
+
+    report = {
+        "factor": factor,
+        "r_target": r_target,
+        "implied_rate_before": implied_before,
+        "implied_rate_after": implied_after,
+    }
+    out_json_p = Path(out_json)
+    with out_json_p.open("w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, sort_keys=True)
+    return out_csv_p, out_json_p
 

@@ -158,6 +158,33 @@
 
 ---
 
+## Step 6c — Global Stock Rescale for Calibration (Optional, Recommended)
+**Goal:** Rescale historical stocks so the implied effective interest rate matches a target at/around anchor, without affecting calibrated issuance shares (uniform scaling of X columns leaves share estimates invariant).
+- **Code:** `src/calibration/stocks.py`
+  - `scale_stocks_for_calibration(stocks_df, fy_interest_df, r_target: float | None = None, frame: str = "FY", year: int | None = None) -> tuple[pd.DataFrame, float]`
+    - If `r_target` is None, compute a target using `input/macro.yaml`:
+      - Read `issuance_default_shares` (short, nb, tips) and `rates.values` (short, nb, tips)
+      - Set `r_target = Σ_k share_k * rate_k` (annualized)
+    - Choose denominator for scaling factor:
+      - If `frame == "FY"`: compute average monthly total stock over chosen FY (`year` inferred from anchor or latest in stocks) → `avg_stock_FY`
+      - Else (`frame == "latest"`): use the latest month’s total stock → `stock_latest`
+    - Set interest target `I_target` from `fy_interest_df` for the FY (or closest available FY if using latest).
+    - Compute scaling factor `f = I_target / (r_target * stock_denominator)`.
+    - Multiply `stock_short`, `stock_nb`, `stock_tips` by `f`; preserve dates and columns.
+  - `write_scaled_stocks_diagnostic(df_scaled, factor, out_csv="output/diagnostics/outstanding_by_bucket_scaled.csv", out_json="output/diagnostics/stock_rescale_report.json")`
+    - Write the scaled CSV and a small JSON report with `{r_target, factor, frame, year, implied_rate_before, implied_rate_after}`.
+- **Artifacts:**
+  - `output/diagnostics/outstanding_by_bucket_scaled.csv`
+  - `output/diagnostics/stock_rescale_report.json`
+- **Tests:** `tests/test_stock_rescale.py`
+  - Factor `f > 0`.
+  - Column sums scale by `≈ f` within tolerance.
+  - Implied rate after scaling is within ±10 bps of `r_target` (or configured tolerance).
+- **Step Report:** show `r_target`, `factor`, chosen frame/year, implied rate before/after, and head/tail preview of scaled stocks.
+- **Gate:** tests pass; both artifacts present; implied rate within tolerance of target.
+
+---
+
 ## Step 7 — Calibration Matrix Build
 **Goal:** Construct `X (SHORT, NB, TIPS)` and `y` (interest) for last 36–60 months.
 - **Code:** `src/calibration/matrix.py` → `build_X(hist_interest_df, hist_stock_df, window_months=48)`.
