@@ -89,15 +89,46 @@
 
 ---
 
-## Step 6 — Historical Adapters (Read Only)
-**Goal:** Ingest `output/historical/` CSVs in a stable way.
+## Step 6 — Historical Adapters (Build Interest Aggregates from Raw Input)
+**Goal:** Build the monthly historical interest expense aggregates directly from the latest `input/IntExp_*` file instead of relying on pre‑aggregated CSVs.
 - **Code:** `src/calibration/matrix.py` (adapters):
-  - Read **monthly interest** history and **outstanding by bucket**.
-  - Normalize units and column names to internal contracts.
-- **Artifacts:** `output/diagnostics/hist_contract_check.csv` (first/last 6 rows of each input).
-- **Tests:** `tests/test_hist_adapters.py` (required columns, dtypes, date monotonicity).
-- **Step Report:** file paths used, shapes, column lists.
-- **Gate:** tests pass; artifact present.
+  - `find_latest_interest_file(pattern="input/IntExp_*") -> Path` (prefer CSV; allow XLSX).
+  - `load_interest_raw(path) -> DataFrame` that reads the file and then:
+    - Drop rows where `Expense Category Description` ≠ `INTEREST EXPENSE ON PUBLIC ISSUES` (e.g., exclude intra‑government/GAS transfers).
+    - Add derived columns from `Record Date`:
+      - `Calendar Year` (CY)
+      - `Fiscal Year` (FY, using `core.dates.fiscal_year` with FY starting in October)
+      - `Month` (1–12)
+    - Add `Debt Category` with values in {`SHORT`, `NB`, `TIPS`, `OTHER`?} via deterministic mapping from available fields (e.g., security type/class). Anything not clearly mapped to `SHORT`/`NB`/`TIPS` goes to `OTHER` if enabled.
+    - Normalize units to USD millions and rename `Current Month Expense Amount` → `Interest Expense`.
+  - Build aggregates:
+    - `monthly_by_category`: group by month (`Record Date` truncated to month start), `Calendar Year`, `Fiscal Year`, `Month`, and `Debt Category`, summing `Interest Expense` → one row per category per month.
+    - `fy_totals`: group by `Fiscal Year` only (across all categories), summing `Interest Expense`.
+    - `cy_totals`: group by `Calendar Year` only (across all categories), summing `Interest Expense`.
+  - Write diagnostics:
+    - `output/diagnostics/interest_monthly_by_category.csv`
+    - `output/diagnostics/interest_fy_totals.csv`
+    - `output/diagnostics/interest_cy_totals.csv`
+- **Artifacts:**
+  - `output/diagnostics/interest_monthly_by_category.csv` with columns:
+    - `Record Date`, `Calendar Year`, `Fiscal Year`, `Month`, `Debt Category` (SHORT, NB, TIPS[, OTHER]), `Interest Expense`
+  - `output/diagnostics/interest_fy_totals.csv` (FY, Interest Expense)
+  - `output/diagnostics/interest_cy_totals.csv` (CY, Interest Expense)
+- **Tests:** `tests/test_hist_adapters.py`
+  - Filtering: no rows remain with `Expense Category Description` ≠ `INTEREST EXPENSE ON PUBLIC ISSUES`.
+  - Columns present and types sane; dates monthly and monotonic.
+  - `Debt Category` values ⊆ {SHORT, NB, TIPS[, OTHER]} and monthly sums ≥ 0.
+  - FY/CY totals equal the corresponding sums of monthly rows (within tolerance).
+- **Step Report:** latest input file path; shapes of three outputs; column lists; head/tail samples; FY/CY example totals.
+- **Gate:** tests pass; three artifacts present and non‑empty.
+
+### Decision: Should we include `OTHER`?
+- Detect necessity during parsing: if some rows cannot be reliably mapped to `SHORT`/`NB`/`TIPS`, enable `OTHER` and route those rows there; otherwise omit `OTHER` from outputs and contracts.
+- If `OTHER` is enabled, plan impacts (to be applied in later steps):
+  - Calibration (Step 7): use `y = Interest Expense` excluding `OTHER`; keep `X = (SHORT, NB, TIPS)` unchanged.
+  - Engine (Steps 9–10): carry `OTHER` as an exogenous series that contributes to total interest but does not participate in issuance/rates dynamics.
+  - Annualization & QA (Steps 11–12): include `OTHER` in totals and visuals; bridge table shows an `OTHER` component.
+  - CLI/Docs: note the optional `OTHER` flow.
 
 ---
 
