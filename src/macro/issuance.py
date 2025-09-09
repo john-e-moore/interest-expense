@@ -8,6 +8,7 @@ import math
 import pandas as pd
 
 
+# Issuance covers marketable buckets only; OTHER is excluded (exogenous)
 REQUIRED_SHARE_COLS: Tuple[str, str, str] = ("short", "nb", "tips")
 
 

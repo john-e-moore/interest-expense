@@ -82,6 +82,7 @@
 - **Code:** `src/macro/issuance.py`
   - `FixedSharesPolicy(short, nb, tips)`
   - `PiecewiseSharesPolicy([{start, short, nb, tips}, ...])`
+  - Note: `OTHER` is an exogenous expense category (from Step 6) and is not part of issuance.
 - **Artifacts:** `output/diagnostics/issuance_preview.csv` (first 24 months of horizon).
 - **Tests:** `tests/test_issuance.py` (sum≈1, bounds, piecewise behavior).
 - **Step Report:** sample shares and validations.
@@ -99,7 +100,7 @@
       - `Calendar Year` (CY)
       - `Fiscal Year` (FY, using `core.dates.fiscal_year` with FY starting in October)
       - `Month` (1–12)
-    - Add `Debt Category` with values in {`SHORT`, `NB`, `TIPS`, `OTHER`?} via deterministic mapping from available fields (e.g., security type/class). Anything not clearly mapped to `SHORT`/`NB`/`TIPS` goes to `OTHER` if enabled.
+    - Add `Debt Category` with values in {`SHORT`, `NB`, `TIPS`, `OTHER`} via deterministic mapping from available fields (e.g., security type/class). Anything not clearly mapped to `SHORT`/`NB`/`TIPS` goes to `OTHER`.
     - Normalize units to USD millions and rename `Current Month Expense Amount` → `Interest Expense`.
   - Build aggregates:
     - `monthly_by_category`: group by month (`Record Date` truncated to month start), `Calendar Year`, `Fiscal Year`, `Month`, and `Debt Category`, summing `Interest Expense` → one row per category per month.
@@ -111,20 +112,20 @@
     - `output/diagnostics/interest_cy_totals.csv`
 - **Artifacts:**
   - `output/diagnostics/interest_monthly_by_category.csv` with columns:
-    - `Record Date`, `Calendar Year`, `Fiscal Year`, `Month`, `Debt Category` (SHORT, NB, TIPS[, OTHER]), `Interest Expense`
+    - `Record Date`, `Calendar Year`, `Fiscal Year`, `Month`, `Debt Category` (SHORT, NB, TIPS, OTHER), `Interest Expense`
   - `output/diagnostics/interest_fy_totals.csv` (FY, Interest Expense)
   - `output/diagnostics/interest_cy_totals.csv` (CY, Interest Expense)
 - **Tests:** `tests/test_hist_adapters.py`
   - Filtering: no rows remain with `Expense Category Description` ≠ `INTEREST EXPENSE ON PUBLIC ISSUES`.
   - Columns present and types sane; dates monthly and monotonic.
-  - `Debt Category` values ⊆ {SHORT, NB, TIPS[, OTHER]} and monthly sums ≥ 0.
+  - `Debt Category` values ⊆ {SHORT, NB, TIPS, OTHER} and monthly sums ≥ 0.
   - FY/CY totals equal the corresponding sums of monthly rows (within tolerance).
 - **Step Report:** latest input file path; shapes of three outputs; column lists; head/tail samples; FY/CY example totals.
 - **Gate:** tests pass; three artifacts present and non‑empty.
 
-### Decision: Should we include `OTHER`?
-- Detect necessity during parsing: if some rows cannot be reliably mapped to `SHORT`/`NB`/`TIPS`, enable `OTHER` and route those rows there; otherwise omit `OTHER` from outputs and contracts.
-- If `OTHER` is enabled, plan impacts (to be applied in later steps):
+### Decision: `OTHER` Included
+- We permanently include `OTHER` for expense items not clearly mapped to `SHORT`/`NB`/`TIPS`.
+- Impacts (applied in later steps):
   - Calibration (Step 7): use `y = Interest Expense` excluding `OTHER`; keep `X = (SHORT, NB, TIPS)` unchanged.
   - Engine (Steps 9–10): carry `OTHER` as an exogenous series that contributes to total interest but does not participate in issuance/rates dynamics.
   - Annualization & QA (Steps 11–12): include `OTHER` in totals and visuals; bridge table shows an `OTHER` component.
@@ -135,6 +136,7 @@
 ## Step 7 — Calibration Matrix Build
 **Goal:** Construct `X (SHORT, NB, TIPS)` and `y` (interest) for last 36–60 months.
 - **Code:** `src/calibration/matrix.py` → `build_X(hist_interest_df, hist_stock_df, window_months=48)`.
+  - `y` excludes `OTHER` interest (i.e., `y = total_interest − other_interest`).
   - Validate: no NaNs; variance(NB) > 0; aligned dates.
 - **Artifacts:** `output/diagnostics/calibration_matrix.csv` (date, y, SHORT, NB, TIPS).
 - **Tests:** `tests/test_calibration_matrix.py` (shapes, NaNs, variance thresholds).
@@ -160,6 +162,7 @@
 - **Code:** `src/engine/{state.py,accrual.py,transitions.py,project.py}`
   - `ProjectionEngine(rates, issuance).run(idx, start_state, deficits_monthly)`
   - `compute_interest` and `update_state` kept **pure**.
+  - Carry `OTHER` as an exogenous monthly series added to total interest; it does not affect issuance or stocks.
 - **Artifacts:** `output/diagnostics/monthly_trace.parquet` (for 3‑month golden run).
 - **Tests:** `tests/test_engine_golden.py` (finite numbers, contiguous dates, shares validity).
 - **Step Report:** first/last 3 rows (all columns), totals, artifact path.
@@ -173,6 +176,7 @@
   - Bills: full monthly rollover.
   - NB/TIPS: constant monthly **decay rate** calibrated to match WAM at anchor (read from historical outstanding by bucket). Persist the chosen decay in `parameters.json`.
   - Interest: existing NB accrues at **anchor average coupon**; new NB uses an **effective current yield** (e.g., r_10y). TIPS add CPI accretion if provided; otherwise keep zero to start.
+  - `OTHER`: passed through as an exogenous add-on to interest; does not roll or accrue within the engine.
 - **Artifacts:** `output/diagnostics/monthly_trace.parquet` (full horizon).
 - **Tests:** extend `tests/test_engine_golden.py` with a 12‑month scenario; add `tests/test_engine_identity.py` that checks:
   - `GFN_t = deficit_t + interest_t + redemptions_t` (within tolerance).
@@ -192,6 +196,7 @@
 - **Tests:** `tests/test_annualize.py` (CY uses gdp_cy, FY uses gdp_fy; values finite; year monotonic).
 - **Step Report:** two sample years (levels + %GDP) with denominators shown.
 - **Gate:** tests pass; CSVs present.
+  - Include `OTHER` in totals; optionally break out by category if diagnostics enabled.
 
 ---
 
@@ -199,7 +204,7 @@
 **Goal:** Human‑checkable continuity around the splice.
 - **Code:** `src/diagnostics/qa.py`
   - Plots: (1) monthly interest 2018–2026, (2) effective rate `interest/avg_outstanding`, (3) annual CY/FY w/ %GDP.
-  - `bridge_table.csv`: FY(anchorFY)→FY(anchorFY+1) decomposition into **stock**, **rate**, **mix/term**, **TIPS accretion**.
+  - `bridge_table.csv`: FY(anchorFY)→FY(anchorFY+1) decomposition into **stock**, **rate**, **mix/term**, **TIPS accretion**, **OTHER**.
 - **Artifacts:** 
   - `output/calendar_year/visualizations/*.png`
   - `output/fiscal_year/visualizations/*.png`
