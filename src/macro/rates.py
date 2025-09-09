@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Mapping, Tuple
 
 import math
+import numpy as np
 import pandas as pd
 
 
@@ -26,7 +27,7 @@ def _assert_finite(df: pd.DataFrame) -> None:
     cols = list(REQUIRED_RATE_COLS)
     if not df[cols].to_numpy().size:
         return
-    if not pd.isfinite(df[cols].to_numpy()).all():
+    if not np.isfinite(df[cols].to_numpy()).all():
         raise ValueError("Rates contain non-finite values (NaN/Inf)")
 
 
@@ -81,7 +82,7 @@ class MonthlyCSVRateProvider:
             raise ValueError("Rates CSV dates must be monotonically increasing")
         df = df.set_index("date")
         _assert_finite(df)
-        self._df = df[REQUIRED_RATE_COLS].copy()
+        self._df = df[list(REQUIRED_RATE_COLS)].copy()
 
     def get(self, index: Iterable[pd.Timestamp]) -> pd.DataFrame:
         idx = pd.to_datetime(pd.DatetimeIndex(index)).to_period("M").to_timestamp()
