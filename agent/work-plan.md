@@ -133,6 +133,31 @@
 
 ---
 
+## Step 6b — MSPD Outstanding Adapter (Marketable Stocks by Bucket)
+**Goal:** Aggregate marketable outstanding amounts from MSPD into monthly stocks by bucket: `stock_short`, `stock_nb`, `stock_tips` (USD millions). This prepares inputs that some calibration/engine steps may use later.
+- **Code:** `src/calibration/stocks.py`
+  - `find_latest_mspd_file(pattern="input/MSPD_*.csv") -> Path` (pick newest by mtime)
+  - `_bucket_from_mspd_class(s: str) -> {SHORT|NB|TIPS|OTHER}` mapping from MSPD `Security Class 1 Description`:
+    - `SHORT`: contains "Bill"
+    - `NB`: contains "Note", "Bond", "Floating Rate", or "FRN"
+    - `TIPS`: contains "Inflation" or "TIPS"
+    - otherwise `OTHER` (ignored downstream here)
+  - `build_outstanding_by_bucket_from_mspd(path) -> DataFrame`:
+    - Read MSPD "Detail of Marketable Treasury Securities Outstanding" CSV
+    - Filter `Security Type Description == "Marketable"`
+    - Parse `Record Date` (month‑end), map bucket, sum `Outstanding Amount (in Millions)` by month and bucket
+    - Return columns: `Record Date`, `stock_short`, `stock_nb`, `stock_tips` (fill missing buckets with 0)
+  - `write_stocks_diagnostic(df, out_path="output/diagnostics/outstanding_by_bucket.csv") -> Path`
+- **Artifacts:**
+  - `output/diagnostics/outstanding_by_bucket.csv` (month‑end date, stock_short, stock_nb, stock_tips)
+- **Tests:** `tests/test_stocks_adapter.py`
+  - Excludes non‑marketable rows; columns present; dates monotonic
+  - Aggregates match a small synthetic sample; values non‑negative
+- **Step Report:** MSPD file path used; shape and date range; head/tail of output
+- **Gate:** tests pass; artifact can be produced from the real MSPD file; no NaNs; non‑empty
+
+---
+
 ## Step 7 — Calibration Matrix Build
 **Goal:** Construct `X (SHORT, NB, TIPS)` and `y` (interest) for last 36–60 months.
 - **Code:** `src/calibration/matrix.py` → `build_X(hist_interest_df, hist_stock_df, window_months=48)`.
