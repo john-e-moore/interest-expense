@@ -48,6 +48,9 @@ def build_outstanding_by_bucket_from_mspd(path: str | Path) -> pd.DataFrame:
     # Keep only marketable and drop pre-aggregated totals
     df = df[df["Security Type Description"].astype(str).str.lower() == "marketable"].copy()
     df = df[~df["Security Class 1 Description"].astype(str).str.contains("total", case=False, na=False)].copy()
+    # Also drop summary/total rows that appear in Class 2
+    if "Security Class 2 Description" in df.columns:
+        df = df[~df["Security Class 2 Description"].astype(str).str.contains("total", case=False, na=False)].copy()
 
     # Parse monthly dates and map to buckets
     df["Record Date"] = pd.to_datetime(df["Record Date"])  # month-end
@@ -60,15 +63,15 @@ def build_outstanding_by_bucket_from_mspd(path: str | Path) -> pd.DataFrame:
     df[col_out] = pd.to_numeric(df[col_out], errors="coerce")
     df = df[df[col_out].notna()].copy()
 
-    # Keep only the most recent month overall per CUSIP to avoid double counting across months
+    # Deduplicate per (Record Date, CUSIP) within each month to avoid within-month duplicates
     cusip_col = "Security Class 2 Description"
     if cusip_col in df.columns:
         df[cusip_col] = df[cusip_col].astype(str)
         df[cusip_col] = df[cusip_col].mask(df[cusip_col].str.lower().isin(["", "none", "nan", "null"]))
         df = (
             df[df[cusip_col].notna()]
-            .sort_values([cusip_col, "Record Date"])  # ascending date, keep last later
-            .drop_duplicates(subset=[cusip_col], keep="last")
+            .sort_values(["Record Date", cusip_col, "Issue Date", "Maturity Date"], na_position="last")
+            .drop_duplicates(subset=["Record Date", cusip_col], keep="last")
         )
 
     grouped = (
@@ -77,6 +80,7 @@ def build_outstanding_by_bucket_from_mspd(path: str | Path) -> pd.DataFrame:
         .sum()
         .pivot(index="Record Date", columns="bucket", values=col_out)
         .rename(columns={"SHORT": "stock_short", "NB": "stock_nb", "TIPS": "stock_tips"})
+        .fillna(0.0)
         .reset_index()
         .sort_values("Record Date")
     )
@@ -105,6 +109,8 @@ def build_mspd_processed_detail(path: str | Path) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
     df = df[df["Security Type Description"].astype(str).str.lower() == "marketable"].copy()
     df = df[~df["Security Class 1 Description"].astype(str).str.contains("total", case=False, na=False)].copy()
+    if "Security Class 2 Description" in df.columns:
+        df = df[~df["Security Class 2 Description"].astype(str).str.contains("total", case=False, na=False)].copy()
     df["Record Date"] = pd.to_datetime(df["Record Date"])  # month-end
     df["bucket"] = df["Security Class 1 Description"].astype(str).map(_bucket_from_mspd_class)
     col_out = "Outstanding Amount (in Millions)"
@@ -113,15 +119,15 @@ def build_mspd_processed_detail(path: str | Path) -> pd.DataFrame:
     df[col_out] = pd.to_numeric(df[col_out], errors="coerce")
     df = df[df[col_out].notna()].copy()
 
-    # Keep only the most recent month overall per CUSIP
+    # Deduplicate per (Record Date, CUSIP) within each month
     cusip_col = "Security Class 2 Description"
     if cusip_col in df.columns:
         df[cusip_col] = df[cusip_col].astype(str)
         df[cusip_col] = df[cusip_col].mask(df[cusip_col].str.lower().isin(["", "none", "nan", "null"]))
         df = (
             df[df[cusip_col].notna()]
-            .sort_values([cusip_col, "Record Date"])  # ascending date
-            .drop_duplicates(subset=[cusip_col], keep="last")
+            .sort_values(["Record Date", cusip_col, "Issue Date", "Maturity Date"], na_position="last")
+            .drop_duplicates(subset=["Record Date", cusip_col], keep="last")
         )
 
     # Keep key identifier/context columns for inspection
