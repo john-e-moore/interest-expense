@@ -291,16 +291,6 @@
 
 ---
 
-## Step 15 — CI & Quality Gates
-**Goal:** Keep it tidy and reproducible.
-- **Code:** GitHub Actions (or preferred CI): run `ruff`, `black --check`, `mypy`, and `pytest -q` on push/PR.
-- **Artifacts:** CI badge in README (optional).
-- **Tests:** CI green.
-- **Step Report:** CI summary.
-- **Gate:** CI passes on main.
-
----
-
 ## Step 16 — Performance Pass
 **Goal:** Ensure full 30‑year run is snappy.
 - **Code:** Vectorize inner loops where safe; avoid per‑row Python in hotspots.
@@ -308,16 +298,6 @@
 - **Tests:** time‑boxed test for full horizon under a threshold (mark as slow).
 - **Step Report:** timing table.
 - **Gate:** meets target (< a few seconds on dev box, adjust as needed).
-
----
-
-## Step 17 — Cohort‑Ready Hooks (Optional)
-**Goal:** Prepare for tenor cohorts without refactor churn.
-- **Code:** Add abstractions so NB bucket logic can be swapped for cohorts while preserving ports/tests.
-- **Artifacts:** N/A (design notes in code).
-- **Tests:** back‑compat; golden run unchanged.
-- **Step Report:** notes on extension points.
-- **Gate:** N/A (optional).
 
 ---
 
@@ -334,6 +314,26 @@
   - [ ] CLI full run finishes and writes all outputs.
 - **Artifacts:** mark decisions in `output/diagnostics/uat_checklist.json`.
 - **Gate:** all checked.
+
+---
+
+## Step 19 — CI & Quality Gates
+**Goal:** Keep it tidy and reproducible.
+- **Code:** GitHub Actions (or preferred CI): run `ruff`, `black --check`, `mypy`, and `pytest -q` on push/PR.
+- **Artifacts:** CI badge in README (optional).
+- **Tests:** CI green.
+- **Step Report:** CI summary.
+- **Gate:** CI passes on main.
+
+---
+
+## Step 20 — Cohort‑Ready Hooks (Optional)
+**Goal:** Prepare for tenor cohorts without refactor churn.
+- **Code:** Add abstractions so NB bucket logic can be swapped for cohorts while preserving ports/tests.
+- **Artifacts:** N/A (design notes in code).
+- **Tests:** back‑compat; golden run unchanged.
+- **Step Report:** notes on extension points.
+- **Gate:** N/A (optional).
 
 ---
 
@@ -377,4 +377,4 @@ python scripts/run_forward.py --config input/macro.yaml --full --diagnostics
 
 ---
 
-**Definition of Done (Project):** All gates passed through Step 15, UAT checklist green, and a full‑horizon run writes annual CSVs and QA visuals with sensible splice behavior.
+**Definition of Done (Project):** All gates passed through Step 19, UAT checklist green, and a full‑horizon run writes annual CSVs and QA visuals with sensible splice behavior.
