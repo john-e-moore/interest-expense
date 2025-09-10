@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from macro.config import load_macro_yaml, write_config_echo
+from core.run_dir import create_run_directory
 from macro.rates import build_month_index, ConstantRatesProvider, write_rates_preview
 from macro.issuance import FixedSharesPolicy, write_issuance_preview
 from engine.state import DebtState
@@ -34,6 +35,8 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_macro_yaml(args.config)
+    # Create timestamped run directory and route outputs under it (T1)
+    run_dir = create_run_directory(base_output_dir="output")
     write_config_echo(cfg)
 
     if args.dry_run:
