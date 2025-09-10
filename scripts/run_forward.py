@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import pandas as pd
+
+from macro.config import load_macro_yaml, write_config_echo
+from macro.rates import build_month_index, ConstantRatesProvider, write_rates_preview
+from macro.issuance import FixedSharesPolicy, write_issuance_preview
+from engine.state import DebtState
+from engine.project import ProjectionEngine
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default="input/macro.yaml")
+    ap.add_argument("--golden", action="store_true", help="Run short horizon (12 months)")
+    args = ap.parse_args()
+
+    cfg = load_macro_yaml(args.config)
+    write_config_echo(cfg)
+
+    horizon = 12 if args.golden else cfg.horizon_months
+    idx = build_month_index(cfg.anchor_date, horizon)
+
+    # Providers
+    if cfg.rates_constant is None:
+        raise SystemExit("macro.yaml must provide constant rates for this step")
+    rp = ConstantRatesProvider({"short": cfg.rates_constant[0], "nb": cfg.rates_constant[1], "tips": cfg.rates_constant[2]})
+    write_rates_preview(rp, idx)
+
+    # Issuance shares: use fitted if present; else config defaults
+    params_path = Path("output/parameters.json")
+    if params_path.exists():
+        import json
+
+        with params_path.open("r", encoding="utf-8") as f:
+            params = json.load(f)
+        s = params.get("issuance_shares", {})
+        issuance = FixedSharesPolicy(short=float(s.get("short", 0.2)), nb=float(s.get("nb", 0.7)), tips=float(s.get("tips", 0.1)))
+    else:
+        if cfg.issuance_default_shares is None:
+            raise SystemExit("No parameters.json and no issuance_default_shares in macro.yaml")
+        short, nb, tips = cfg.issuance_default_shares
+        issuance = FixedSharesPolicy(short=short, nb=nb, tips=tips)
+    write_issuance_preview(issuance, idx)
+
+    # Start state from latest stocks (scaled) month
+    stocks = pd.read_csv("output/diagnostics/outstanding_by_bucket_scaled.csv", parse_dates=["Record Date"]).sort_values("Record Date")
+    last = stocks.iloc[-1]
+    start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
+
+    # Simple deficits: zero for step 9 skeleton
+    deficits = pd.Series(0.0, index=idx)
+
+    # OTHER interest exogenous: set to zero here
+    other = pd.Series(0.0, index=idx)
+
+    engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
+    df = engine.run(idx, start_state, deficits, other)
+    print(df.head(3))
+    print(df.tail(3))
+
+
+if __name__ == "__main__":
+    main()
+
+
