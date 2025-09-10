@@ -12,12 +12,14 @@ from engine.state import DebtState
 from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
+from diagnostics.qa import run_qa
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="input/macro.yaml")
     ap.add_argument("--golden", action="store_true", help="Run short horizon (12 months)")
+    ap.add_argument("--diagnostics", action="store_true", help="Write QA visuals and bridge")
     args = ap.parse_args()
 
     cfg = load_macro_yaml(args.config)
@@ -78,6 +80,23 @@ def main() -> None:
     cy, fy = annualize(monthly_for_annual, gdp_model)
     p_cy, p_fy = write_annual_csvs(cy, fy)
     print("Wrote annual CSVs:", p_cy, p_fy)
+
+    # Optional diagnostics & visuals
+    if args.diagnostics:
+        # Ensure headless backend
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+        except Exception:
+            pass
+        p1, p2, p3 = run_qa(
+            monthly_trace_path="output/diagnostics/monthly_trace.parquet",
+            annual_cy_path=str(p_cy),
+            annual_fy_path=str(p_fy),
+            macro_path=args.config,
+        )
+        print("Wrote QA:", p1, p2, p3)
 
 
 if __name__ == "__main__":
