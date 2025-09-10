@@ -10,6 +10,8 @@ from macro.rates import build_month_index, ConstantRatesProvider, write_rates_pr
 from macro.issuance import FixedSharesPolicy, write_issuance_preview
 from engine.state import DebtState
 from engine.project import ProjectionEngine
+from annualize import annualize, write_annual_csvs
+from macro.gdp import build_gdp_function
 
 
 def main() -> None:
@@ -61,6 +63,21 @@ def main() -> None:
     df = engine.run(idx, start_state, deficits, other)
     print(df.head(3))
     print(df.tail(3))
+
+    # Step 11: Annualization & % of GDP
+    # Build GDP model; if macro.yaml lacks forward growth, assume 0 growth for required years
+    # Determine required FY/CY years from the projection index
+    years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
+    anchor_fy = pd.Timestamp(cfg.anchor_date).year if hasattr(cfg, "anchor_date") else idx[0].year
+    growth_fy = {y: 0.0 for y in years_needed if y >= anchor_fy}
+    gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
+
+    # Use interest including OTHER for totals
+    monthly_for_annual = df.copy()
+    monthly_for_annual = monthly_for_annual.assign(interest_total=monthly_for_annual["interest_total"] + monthly_for_annual.get("other_interest", 0.0))
+    cy, fy = annualize(monthly_for_annual, gdp_model)
+    p_cy, p_fy = write_annual_csvs(cy, fy)
+    print("Wrote annual CSVs:", p_cy, p_fy)
 
 
 if __name__ == "__main__":
