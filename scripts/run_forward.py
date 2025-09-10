@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+# Ensure 'src' is on sys.path when invoked via subprocess
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from macro.config import load_macro_yaml, write_config_echo
 from macro.rates import build_month_index, ConstantRatesProvider, write_rates_preview
@@ -13,6 +20,7 @@ from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from diagnostics.qa import run_qa
+from diagnostics.uat import run_uat
 
 
 def main() -> None:
@@ -22,6 +30,7 @@ def main() -> None:
     ap.add_argument("--diagnostics", action="store_true", help="Write QA visuals and bridge")
     ap.add_argument("--dry-run", action="store_true", help="Parse config and exit (no run)")
     ap.add_argument("--perf", action="store_true", help="Run full-horizon performance profile")
+    ap.add_argument("--uat", action="store_true", help="Run UAT checklist and write JSON report")
     args = ap.parse_args()
 
     cfg = load_macro_yaml(args.config)
@@ -103,6 +112,20 @@ def main() -> None:
             macro_path=args.config,
         )
         print("Wrote QA:", p1, p2, p3)
+
+    # Optional UAT checklist
+    if args.uat:
+        uat_path = run_uat(
+            config_path=args.config,
+            monthly_trace_path="output/diagnostics/monthly_trace.parquet",
+            annual_cy_path=str(p_cy),
+            annual_fy_path=str(p_fy),
+            bridge_table_path="output/diagnostics/bridge_table.csv",
+            calibration_matrix_path="output/diagnostics/calibration_matrix.csv",
+            parameters_path="output/parameters.json",
+            out_path="output/diagnostics/uat_checklist.json",
+        )
+        print("Wrote UAT checklist:", uat_path)
 
     # Optional performance profile over full horizon
     if args.perf:

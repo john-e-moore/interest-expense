@@ -1,5 +1,5 @@
 anchor_date: 2025-07-01
-horizon_months: 24
+horizon_months: 363 # end of 2055
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 30000000  # 30,000,000 USD millions = $30T
