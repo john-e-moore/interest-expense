@@ -20,10 +20,15 @@ def main() -> None:
     ap.add_argument("--config", default="input/macro.yaml")
     ap.add_argument("--golden", action="store_true", help="Run short horizon (12 months)")
     ap.add_argument("--diagnostics", action="store_true", help="Write QA visuals and bridge")
+    ap.add_argument("--dry-run", action="store_true", help="Parse config and exit (no run)")
     args = ap.parse_args()
 
     cfg = load_macro_yaml(args.config)
     write_config_echo(cfg)
+
+    if args.dry_run:
+        print("DRY RUN OK: config parsed, anchor=", cfg.anchor_date, "horizon=", cfg.horizon_months)
+        return
 
     horizon = 12 if args.golden else cfg.horizon_months
     idx = build_month_index(cfg.anchor_date, horizon)
