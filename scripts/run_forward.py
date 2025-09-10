@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 
 from macro.config import load_macro_yaml, write_config_echo
 from core.run_dir import create_run_directory
+from core.logging_utils import setup_run_logger, get_git_sha, log_run_start, log_run_end
 from macro.rates import build_month_index, ConstantRatesProvider, write_rates_preview
 from macro.issuance import FixedSharesPolicy, write_issuance_preview
 from engine.state import DebtState
@@ -31,16 +32,22 @@ def main() -> None:
     ap.add_argument("--diagnostics", action="store_true", help="Write QA visuals and bridge")
     ap.add_argument("--dry-run", action="store_true", help="Parse config and exit (no run)")
     ap.add_argument("--perf", action="store_true", help="Run full-horizon performance profile")
+    ap.add_argument("--debug", action="store_true", help="Enable DEBUG logging for this run")
+    ap.add_argument("--outdir", default=None, help="Override output directory (for tests)")
     ap.add_argument("--uat", action="store_true", help="Run UAT checklist and write JSON report")
     args = ap.parse_args()
 
     cfg = load_macro_yaml(args.config)
-    # Create timestamped run directory and route outputs under it (T1)
-    run_dir = create_run_directory(base_output_dir="output")
-    write_config_echo(cfg)
+    # Create timestamped run directory (or use override) and setup logging (T1, T2)
+    base_out = args.outdir or "output"
+    run_dir = create_run_directory(base_output_dir=base_out)
+    logger = setup_run_logger(run_dir / "run_forward.log", debug=args.debug)
+    log_run_start(logger, run_dir=run_dir, config_path=args.config, git_sha=get_git_sha())
+    write_config_echo(cfg, out_path=run_dir / "diagnostics" / "config_echo.json")
 
     if args.dry_run:
         print("DRY RUN OK: config parsed, anchor=", cfg.anchor_date, "horizon=", cfg.horizon_months)
+        log_run_end(logger, status="dry-run")
         return
 
     horizon = 12 if args.golden else cfg.horizon_months
@@ -136,6 +143,8 @@ def main() -> None:
 
         perf_path = run_perf_profile(args.config)
         print("Perf profile:", perf_path)
+
+    log_run_end(logger, status="success")
 
 
 if __name__ == "__main__":
