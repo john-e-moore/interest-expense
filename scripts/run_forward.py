@@ -21,6 +21,7 @@ def main() -> None:
     ap.add_argument("--golden", action="store_true", help="Run short horizon (12 months)")
     ap.add_argument("--diagnostics", action="store_true", help="Write QA visuals and bridge")
     ap.add_argument("--dry-run", action="store_true", help="Parse config and exit (no run)")
+    ap.add_argument("--perf", action="store_true", help="Run full-horizon performance profile")
     args = ap.parse_args()
 
     cfg = load_macro_yaml(args.config)
@@ -102,6 +103,13 @@ def main() -> None:
             macro_path=args.config,
         )
         print("Wrote QA:", p1, p2, p3)
+
+    # Optional performance profile over full horizon
+    if args.perf:
+        from diagnostics.perf import run_perf_profile
+
+        perf_path = run_perf_profile(args.config)
+        print("Perf profile:", perf_path)
 
 
 if __name__ == "__main__":
