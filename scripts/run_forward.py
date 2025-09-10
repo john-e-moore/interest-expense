@@ -57,10 +57,10 @@ def main() -> None:
     if cfg.rates_constant is None:
         raise SystemExit("macro.yaml must provide constant rates for this step")
     rp = ConstantRatesProvider({"short": cfg.rates_constant[0], "nb": cfg.rates_constant[1], "tips": cfg.rates_constant[2]})
-    write_rates_preview(rp, idx)
+    write_rates_preview(rp, idx, out_path=str(run_dir / "diagnostics" / "rates_preview.csv"))
 
     # Issuance shares: use fitted if present; else config defaults
-    params_path = Path("output/parameters.json")
+    params_path = run_dir / "parameters.json"
     if params_path.exists():
         import json
 
@@ -73,10 +73,61 @@ def main() -> None:
             raise SystemExit("No parameters.json and no issuance_default_shares in macro.yaml")
         short, nb, tips = cfg.issuance_default_shares
         issuance = FixedSharesPolicy(short=short, nb=nb, tips=tips)
-    write_issuance_preview(issuance, idx)
+    write_issuance_preview(issuance, idx, out_path=str(run_dir / "diagnostics" / "issuance_preview.csv"))
 
-    # Start state from latest stocks (scaled) month
-    stocks = pd.read_csv("output/diagnostics/outstanding_by_bucket_scaled.csv", parse_dates=["Record Date"]).sort_values("Record Date")
+    # Start state from latest stocks (scaled) month. If scaled stocks are missing, build them
+    # from MSPD outstanding and scale to FY interest totals using config rates.
+    scaled_path = run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv"
+    if not scaled_path.exists():
+        try:
+            # Build outstanding by bucket from MSPD
+            from calibration.stocks import (
+                find_latest_mspd_file,
+                build_outstanding_by_bucket_from_mspd,
+                write_stocks_diagnostic,
+                scale_stocks_for_calibration,
+                write_scaled_stocks_diagnostic,
+            )
+            from calibration.matrix import (
+                find_latest_interest_file,
+                load_interest_raw,
+                build_monthly_by_category,
+                build_fy_totals,
+                build_cy_totals,
+                write_interest_diagnostics,
+            )
+
+            mspd_path = find_latest_mspd_file("input/MSPD_*.csv")
+            stocks_raw = build_outstanding_by_bucket_from_mspd(mspd_path)
+            # Write unscaled diagnostic for transparency
+            write_stocks_diagnostic(stocks_raw, run_dir / "diagnostics" / "outstanding_by_bucket.csv")
+
+            # Interest diagnostics to get FY totals
+            int_path = find_latest_interest_file("input/IntExp_*")
+            interest_raw = load_interest_raw(int_path)
+            monthly_by_cat = build_monthly_by_category(interest_raw)
+            fy_totals = build_fy_totals(monthly_by_cat)
+            cy_totals = build_cy_totals(monthly_by_cat)
+            # Also write interest diagnostics; useful for downstream steps
+            write_interest_diagnostics(monthly_by_cat, fy_totals, cy_totals, out_dir=run_dir / "diagnostics")
+
+            # Scale stocks so implied effective rate ~ target from config
+            df_scaled, factor, implied_before = scale_stocks_for_calibration(
+                stocks_raw, fy_totals, config_path=args.config
+            )
+            write_scaled_stocks_diagnostic(
+                df_scaled,
+                factor,
+                out_csv=scaled_path,
+                out_json=str(run_dir / "diagnostics" / "stock_rescale_report.json"),
+                r_target=None,
+                implied_before=implied_before,
+                implied_after=None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"Unable to build scaled stocks automatically: {exc}")
+
+    stocks = pd.read_csv(scaled_path, parse_dates=["Record Date"]).sort_values("Record Date")
     last = stocks.iloc[-1]
     start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
 
@@ -87,7 +138,7 @@ def main() -> None:
     other = pd.Series(0.0, index=idx)
 
     engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
-    df = engine.run(idx, start_state, deficits, other)
+    df = engine.run(idx, start_state, deficits, other, trace_out_path=run_dir / "diagnostics" / "monthly_trace.parquet")
     print(df.head(3))
     print(df.tail(3))
 
@@ -103,7 +154,7 @@ def main() -> None:
     monthly_for_annual = df.copy()
     monthly_for_annual = monthly_for_annual.assign(interest_total=monthly_for_annual["interest_total"] + monthly_for_annual.get("other_interest", 0.0))
     cy, fy = annualize(monthly_for_annual, gdp_model)
-    p_cy, p_fy = write_annual_csvs(cy, fy)
+    p_cy, p_fy = write_annual_csvs(cy, fy, base_dir=str(run_dir))
     print("Wrote annual CSVs:", p_cy, p_fy)
 
     # Optional diagnostics & visuals
@@ -116,10 +167,11 @@ def main() -> None:
         except Exception:
             pass
         p1, p2, p3 = run_qa(
-            monthly_trace_path="output/diagnostics/monthly_trace.parquet",
+            monthly_trace_path=run_dir / "diagnostics" / "monthly_trace.parquet",
             annual_cy_path=str(p_cy),
             annual_fy_path=str(p_fy),
             macro_path=args.config,
+            out_base=str(run_dir),
         )
         print("Wrote QA:", p1, p2, p3)
 
@@ -127,13 +179,13 @@ def main() -> None:
     if args.uat:
         uat_path = run_uat(
             config_path=args.config,
-            monthly_trace_path="output/diagnostics/monthly_trace.parquet",
+            monthly_trace_path=run_dir / "diagnostics" / "monthly_trace.parquet",
             annual_cy_path=str(p_cy),
             annual_fy_path=str(p_fy),
-            bridge_table_path="output/diagnostics/bridge_table.csv",
-            calibration_matrix_path="output/diagnostics/calibration_matrix.csv",
-            parameters_path="output/parameters.json",
-            out_path="output/diagnostics/uat_checklist.json",
+            bridge_table_path=str(run_dir / "diagnostics" / "bridge_table.csv"),
+            calibration_matrix_path=str(run_dir / "diagnostics" / "calibration_matrix.csv"),
+            parameters_path=str(run_dir / "parameters.json"),
+            out_path=str(run_dir / "diagnostics" / "uat_checklist.json"),
         )
         print("Wrote UAT checklist:", uat_path)
 
@@ -141,7 +193,7 @@ def main() -> None:
     if args.perf:
         from diagnostics.perf import run_perf_profile
 
-        perf_path = run_perf_profile(args.config)
+        perf_path = run_perf_profile(args.config, out_base=run_dir, stocks_path=scaled_path)
         print("Perf profile:", perf_path)
 
     log_run_end(logger, status="success")

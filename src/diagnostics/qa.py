@@ -140,16 +140,20 @@ def run_qa(
     annual_cy_path: str | Path = "output/calendar_year/spreadsheets/annual.csv",
     annual_fy_path: str | Path = "output/fiscal_year/spreadsheets/annual.csv",
     macro_path: str | Path = "input/macro.yaml",
+    out_base: str | Path | None = None,
 ) -> Tuple[Path, Path, Path]:
     monthly = _read_monthly_trace(monthly_trace_path)
-    # Plots
-    p1 = _plot_monthly_interest(monthly, Path("output/calendar_year/visualizations"))
-    p2 = _plot_effective_rate(monthly, Path("output/fiscal_year/visualizations"))
-    _plot_annual(annual_cy_path, Path("output/calendar_year/visualizations"), "Annual CY Interest and %GDP")
-    _plot_annual(annual_fy_path, Path("output/fiscal_year/visualizations"), "Annual FY Interest and %GDP")
+    # Plots (route to out_base if provided)
+    base = Path(out_base) if out_base is not None else Path("output")
+    cy_vis_dir = base / "calendar_year" / "visualizations"
+    fy_vis_dir = base / "fiscal_year" / "visualizations"
+    p1 = _plot_monthly_interest(monthly, cy_vis_dir)
+    p2 = _plot_effective_rate(monthly, fy_vis_dir)
+    _plot_annual(annual_cy_path, cy_vis_dir, "Annual CY Interest and %GDP")
+    _plot_annual(annual_fy_path, fy_vis_dir, "Annual FY Interest and %GDP")
     # Bridge
     bridge = build_bridge_table(monthly, macro_path)
-    bridge_path = Path("output/diagnostics/bridge_table.csv")
+    bridge_path = (base / "diagnostics" / "bridge_table.csv")
     bridge_path.parent.mkdir(parents=True, exist_ok=True)
     bridge.to_csv(bridge_path, index=False)
     return p1, p2, bridge_path

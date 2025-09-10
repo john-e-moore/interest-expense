@@ -13,7 +13,7 @@ from engine.state import DebtState
 from engine.project import ProjectionEngine
 
 
-def run_perf_profile(config_path: str | Path = "input/macro.yaml") -> Path:
+def run_perf_profile(config_path: str | Path = "input/macro.yaml", *, out_base: str | Path | None = None, stocks_path: str | Path = "output/diagnostics/outstanding_by_bucket_scaled.csv") -> Path:
     cfg = load_macro_yaml(config_path)
     idx = build_month_index(cfg.anchor_date, cfg.horizon_months)
 
@@ -35,7 +35,7 @@ def run_perf_profile(config_path: str | Path = "input/macro.yaml") -> Path:
         issuance = FixedSharesPolicy(short=short, nb=nb, tips=tips)
 
     # Start state from latest scaled stocks
-    stocks = pd.read_csv("output/diagnostics/outstanding_by_bucket_scaled.csv", parse_dates=["Record Date"]).sort_values("Record Date")
+    stocks = pd.read_csv(stocks_path, parse_dates=["Record Date"]).sort_values("Record Date")
     last = stocks.iloc[-1]
     start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
 
@@ -43,10 +43,11 @@ def run_perf_profile(config_path: str | Path = "input/macro.yaml") -> Path:
     engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
 
     t0 = time.perf_counter()
-    df = engine.run(idx, start_state, deficits)
+    trace_out = (Path(out_base) / "diagnostics" / "monthly_trace.parquet") if out_base is not None else None
+    df = engine.run(idx, start_state, deficits, trace_out_path=trace_out)
     t1 = time.perf_counter()
 
-    out = Path("output/diagnostics/perf_profile.json")
+    out = (Path(out_base) / "diagnostics" / "perf_profile.json") if out_base is not None else Path("output/diagnostics/perf_profile.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "months": int(len(idx)),
