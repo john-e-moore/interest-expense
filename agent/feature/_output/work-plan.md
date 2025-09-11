@@ -63,6 +63,18 @@
 - Optionally accept `--outdir` to override timestamped dir (for reproducible tests); default remains timestamped.
 - Echo effective configuration and run directory at startup in logs and stdout.
 
+### T6b. Diagnostic logging coverage (R4)
+- Add DEBUG logs at key milestones:
+  - Config parsed (anchor date, horizon, issuance shares, rates).
+  - Run directory created and resolved paths.
+  - Providers built (rates, issuance) and previews written (paths).
+  - Stocks scaling pipeline (inputs found, scale factor, implied rates before/after).
+  - Engine start/end with index span and row counts.
+  - Annualization input span and output years written (paths).
+  - QA/UAT/Perf start/end and artifact paths.
+- On exceptions, log at ERROR with brief context and remediation hints.
+- Tests: when `--debug` is set, assert `run_forward.log` contains markers like `RUN START`, `ENGINE START`, `ANNUALIZE DONE`, `QA WRITE`, `UAT DONE`, `PERF DONE`, and `RUN END`.
+
 ### T7. Tests and sanity checks (all)
 - Add pytest cases:
   - Directory creation uniqueness across two runs; structure contains expected subpaths.
