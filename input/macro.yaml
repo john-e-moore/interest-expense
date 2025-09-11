@@ -1,15 +1,15 @@
 anchor_date: 2025-07-01
-horizon_months: 363 # end of 2055
-gdp:
+horizon_months: 363 # end of FY2055
+gdp: # Nominal
   anchor_fy: 2025
-  anchor_value_usd_millions: 30000000  # 30,000,000 USD millions = $30T
+  anchor_value_usd_millions: 30353902  # 30,353,902 USD millions = $30T
 deficits:
   frame: FY  # FY or CY
 issuance_default_shares:
   short: 0.2
   nb: 0.7
   tips: 0.1
-rates: # current market rates
+rates: # Current market rates, not effective rate
   type: constant
   values:
     short: 0.03

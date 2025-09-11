@@ -29,6 +29,7 @@ class ProjectionEngine:
         decay_tips: float = 0.01,
         coupon_nb_existing_annual: float | None = None,
         coupon_tips_existing_annual: float | None = None,
+        trace_out_path: str | Path | None = None,
     ) -> pd.DataFrame:
         idx = pd.to_datetime(pd.DatetimeIndex(index)).to_period("M").to_timestamp()
         rates = self.rates_provider.get(idx)
@@ -80,7 +81,7 @@ class ProjectionEngine:
             state = update_state(state, new_short, new_nb, new_tips, decay_nb=decay_nb, decay_tips=decay_tips)
 
         df = pd.DataFrame(rows).set_index("date")
-        out = Path("output/diagnostics/monthly_trace.parquet")
+        out = Path(trace_out_path) if trace_out_path is not None else Path("output/diagnostics/monthly_trace.parquet")
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
             df.to_parquet(out)
