@@ -38,15 +38,18 @@
 - Construct annual series by combining historical diagnostics with annualized forward monthly trace:
   - Historical: use `diagnostics/interest_fy_totals.csv` and `diagnostics/interest_cy_totals.csv` up to the anchor date.
   - Forward: aggregate the monthly trace table to FY and CY totals. If the anchor date falls mid-year, form the anchor-year total as (historical months YTD) + (forward months remaining) for that same year.
+  - Look up GDP for each fiscal or calendar year and add that to the data you will be plotting from.
 - Overlay historical vs forward on a single chart with shared units/styles; include a legend that distinguishes historical and forward segments.
 - Add a vertical cutoff annotation at the anchor date (last historical month) with a label.
-- Save to `{run_dir}/visualizations/historical_vs_forward.png` and log the path.
+- Save fiscal year results to `{run_dir}/fiscal_year/visualizations/historical_vs_forward.png` and `{run_dir}/fiscal_year/visualizations/historical_vs_forward_pct_gdp.png` and log the paths.
+- Save calendar year results to `{run_dir}/calendar_year/visualizations/historical_vs_forward.png` and `{run_dir}/calendar_year/visualizations/historical_vs_forward_pct_gdp.png` and log the paths.
 
 ### T5. Fix annual chart labels/formatting (R3)
 - In the annual FY and CY chart generation code:
   - Set right y-axis title to `USD trillions`.
   - Format % GDP axis ticks with 1 decimal using a matplotlib percent formatter with `xmax=1`.
 - Ensure both `annual_fy.png` and `annual_cy.png` are saved under the timestamped structure.
+- Make the same y-axis label change for all of the historical_vs_forward charts.
 
 ### T6. CLI enhancements and plumbing (R1, R4)
 - Add `--debug` flag to `scripts/run_forward.py` to elevate logging level.

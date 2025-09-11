@@ -34,10 +34,19 @@ def run_perf_profile(config_path: str | Path = "input/macro.yaml", *, out_base: 
         short, nb, tips = cfg.issuance_default_shares
         issuance = FixedSharesPolicy(short=short, nb=nb, tips=tips)
 
-    # Start state from latest scaled stocks
-    stocks = pd.read_csv(stocks_path, parse_dates=["Record Date"]).sort_values("Record Date")
-    last = stocks.iloc[-1]
-    start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
+    # Start state from latest scaled stocks; fall back to synthetic if not present
+    try:
+        stocks = pd.read_csv(stocks_path, parse_dates=["Record Date"]).sort_values("Record Date")
+        last = stocks.iloc[-1]
+        start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
+    except FileNotFoundError:
+        # Synthesize a small starting state using issuance_default_shares if available
+        base_total = 1e7
+        if cfg.issuance_default_shares is not None:
+            s, n, t = cfg.issuance_default_shares
+        else:
+            s, n, t = 0.2, 0.7, 0.1
+        start_state = DebtState(stock_short=base_total * s, stock_nb=base_total * n, stock_tips=base_total * t)
 
     deficits = pd.Series(0.0, index=idx)
     engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)

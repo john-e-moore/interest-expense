@@ -5,6 +5,7 @@ from typing import Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import json
 
 from core.dates import fiscal_year
 from macro.config import load_macro_yaml
@@ -86,6 +87,200 @@ def _plot_annual(annual_path: str | Path, out_dir: Path, title: str) -> Path:
     return p
 
 
+def _compose_hist_vs_forward_series(
+    monthly_df: pd.DataFrame,
+    hist_df: pd.DataFrame,
+    *,
+    anchor_date: pd.Timestamp,
+    frame: str = "FY",
+) -> Tuple[pd.Series, pd.Series, int]:
+    """
+    Build two annual series split at the anchor year: historical and forward.
+
+    - historical_series: totals strictly before anchor year + anchor-year historical YTD
+    - forward_series: anchor-year forward remainder + totals strictly after anchor year
+
+    frame: "FY" or "CY". hist_df must have columns:
+      FY → ["Fiscal Year", "Interest Expense"], CY → ["Calendar Year", "Interest Expense"].
+    Returns (historical_series, forward_series, anchor_year)
+    """
+    if frame not in {"FY", "CY"}:
+        raise ValueError("frame must be 'FY' or 'CY'")
+
+    df = monthly_df.copy()
+    df.index = pd.to_datetime(pd.DatetimeIndex(df.index)).to_period("M").to_timestamp()
+    # Include other_interest if present to match historical coverage
+    total_col = "interest_total"
+    if "other_interest" in df.columns:
+        df["_total_interest"] = df["interest_total"].astype(float) + df["other_interest"].astype(float)
+        total_col = "_total_interest"
+
+    if frame == "FY":
+        df["Y"] = df.index.map(fiscal_year)
+        year_col = "Fiscal Year"
+    else:
+        df["Y"] = df.index.year
+        year_col = "Calendar Year"
+
+    # Only consider months at/after anchor month start
+    anchor = pd.Timestamp(anchor_date).to_period("M").to_timestamp()
+    df = df.loc[df.index >= anchor]
+
+    # Forward annualized
+    fwd = df.groupby("Y", as_index=True)[total_col].sum()
+
+    # Historical totals (up to anchor date) – assume provided file is YTD for anchor year
+    if year_col not in hist_df.columns or "Interest Expense" not in hist_df.columns:
+        raise ValueError("historical totals missing expected columns")
+    hist_tbl = (
+        hist_df[[year_col, "Interest Expense"]]
+        .dropna()
+        .rename(columns={year_col: "Y", "Interest Expense": "hist"})
+        .set_index("Y")["hist"]
+        .astype(float)
+    )
+
+    anchor_year = int(anchor.year if frame == "CY" else fiscal_year(anchor))
+
+    # Build aligned year index covering both
+    years = sorted(set(hist_tbl.index.tolist()) | set(fwd.index.tolist()))
+    # Historical part: years < anchor_year use full historical; anchor_year uses hist YTD
+    hist_series = pd.Series(index=years, dtype=float)
+    for y in years:
+        if y < anchor_year:
+            hist_series.loc[y] = float(hist_tbl.get(y, float("nan")))
+        elif y == anchor_year:
+            hist_series.loc[y] = float(hist_tbl.get(y, 0.0))
+        else:
+            hist_series.loc[y] = float("nan")
+
+    # Forward part: anchor remainder + full years after
+    fwd_series = pd.Series(index=years, dtype=float)
+    for y in years:
+        if y < anchor_year:
+            fwd_series.loc[y] = float("nan")
+        elif y == anchor_year:
+            fwd_series.loc[y] = float(fwd.get(y, 0.0))
+        else:
+            fwd_series.loc[y] = float(fwd.get(y, float("nan")))
+
+    return hist_series, fwd_series, anchor_year
+
+
+def _plot_historical_vs_forward(
+    monthly_df: pd.DataFrame,
+    hist_fy_path: str | Path,
+    *,
+    macro_path: str | Path,
+    out_dir: Path,
+    frame: str,
+) -> Path:
+    """
+    Create an overlay chart of historical vs forward annual interest (FY),
+    splicing anchor-year as historical YTD + forward remainder.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg = load_macro_yaml(macro_path)
+    hist_fy = pd.read_csv(hist_fy_path)
+    hist_series, fwd_series, anchor_year = _compose_hist_vs_forward_series(
+        monthly_df, hist_fy, anchor_date=cfg.anchor_date, frame=frame
+    )
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(hist_series.index, hist_series.values, label="Historical", color="tab:blue", marker="o")
+    ax.plot(fwd_series.index, fwd_series.values, label="Forward", color="tab:orange", marker="s")
+    if frame == "FY":
+        ax.set_title("Historical vs Forward Interest (FY)")
+        ax.set_xlabel("Fiscal Year")
+    else:
+        ax.set_title("Historical vs Forward Interest (CY)")
+        ax.set_xlabel("Calendar Year")
+    ax.set_ylabel("USD millions")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    # Vertical cutoff at anchor year between hist and fwd
+    ax.axvline(anchor_year + 0.0, color="k", linestyle="--", alpha=0.6)
+    ax.annotate(
+        "forecast starts",
+        xy=(anchor_year + 0.02, ax.get_ylim()[1] * 0.9),
+        fontsize=9,
+        color="k",
+    )
+
+    p = out_dir / "historical_vs_forward.png"
+    fig.tight_layout()
+    fig.savefig(p)
+    # Minimal metadata to assist tests
+    meta = {
+        "legend": [t.get_text() for t in ax.get_legend().get_texts()],
+        "anchor_year": int(anchor_year),
+    }
+    p.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
+    plt.close(fig)
+    return p
+
+
+def _plot_historical_vs_forward_pct_gdp(
+    monthly_df: pd.DataFrame,
+    hist_path: str | Path,
+    *,
+    macro_path: str | Path,
+    out_dir: Path,
+    frame: str,
+) -> Path:
+    """
+    Plot historical vs forward as % of GDP for FY or CY.
+    """
+    from macro.gdp import build_gdp_function
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg = load_macro_yaml(macro_path)
+    hist = pd.read_csv(hist_path)
+    hist_series, fwd_series, anchor_year = _compose_hist_vs_forward_series(
+        monthly_df, hist, anchor_date=cfg.anchor_date, frame=frame
+    )
+    # Build a simple GDP model with flat growth if growth path is not provided
+    years = list(hist_series.index)
+    if years:
+        min_year = int(min(years))
+        max_year = int(max(years))
+    else:
+        min_year = int(cfg.gdp_anchor_fy)
+        max_year = int(cfg.gdp_anchor_fy)
+    # Provide flat growth for all years we might reference when moving forward/backward
+    growth_fy = {int(y): 0.0 for y in range(min_year, max_year + 2)}
+    gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
+    if frame == "FY":
+        denom = hist_series.index.map(gdp_model.gdp_fy)
+        title = "Historical vs Forward Interest (%GDP, FY)"
+        xlabel = "Fiscal Year"
+    else:
+        denom = hist_series.index.map(gdp_model.gdp_cy)
+        title = "Historical vs Forward Interest (%GDP, CY)"
+        xlabel = "Calendar Year"
+
+    hist_pct = hist_series / denom
+    fwd_pct = fwd_series / denom
+
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(hist_pct.index, hist_pct.values, label="Historical", color="tab:blue", marker="o")
+    ax.plot(fwd_pct.index, fwd_pct.values, label="Forward", color="tab:orange", marker="s")
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("% of GDP")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.axvline(anchor_year + 0.0, color="k", linestyle="--", alpha=0.6)
+    ax.annotate("forecast starts", xy=(anchor_year + 0.02, ax.get_ylim()[1] * 0.9), fontsize=9, color="k")
+    p = out_dir / ("historical_vs_forward_pct_gdp.png")
+    fig.tight_layout()
+    fig.savefig(p)
+    plt.close(fig)
+    return p
+
+
 def build_bridge_table(monthly_df: pd.DataFrame, macro_path: str | Path) -> pd.DataFrame:
     cfg = load_macro_yaml(macro_path)
     anchor_fy = cfg.gdp_anchor_fy
@@ -147,10 +342,40 @@ def run_qa(
     base = Path(out_base) if out_base is not None else Path("output")
     cy_vis_dir = base / "calendar_year" / "visualizations"
     fy_vis_dir = base / "fiscal_year" / "visualizations"
+    # FY/CY and pctGDP variants
     p1 = _plot_monthly_interest(monthly, cy_vis_dir)
     p2 = _plot_effective_rate(monthly, fy_vis_dir)
     _plot_annual(annual_cy_path, cy_vis_dir, "Annual CY Interest and %GDP")
     _plot_annual(annual_fy_path, fy_vis_dir, "Annual FY Interest and %GDP")
+    # Historical vs Forward overlays
+    _plot_historical_vs_forward(
+        monthly,
+        hist_fy_path=base / "diagnostics" / "interest_fy_totals.csv",
+        macro_path=macro_path,
+        out_dir=fy_vis_dir,
+        frame="FY",
+    )
+    _plot_historical_vs_forward(
+        monthly,
+        hist_fy_path=base / "diagnostics" / "interest_cy_totals.csv",
+        macro_path=macro_path,
+        out_dir=cy_vis_dir,
+        frame="CY",
+    )
+    _plot_historical_vs_forward_pct_gdp(
+        monthly,
+        hist_path=base / "diagnostics" / "interest_fy_totals.csv",
+        macro_path=macro_path,
+        out_dir=fy_vis_dir,
+        frame="FY",
+    )
+    _plot_historical_vs_forward_pct_gdp(
+        monthly,
+        hist_path=base / "diagnostics" / "interest_cy_totals.csv",
+        macro_path=macro_path,
+        out_dir=cy_vis_dir,
+        frame="CY",
+    )
     # Bridge
     bridge = build_bridge_table(monthly, macro_path)
     bridge_path = (base / "diagnostics" / "bridge_table.csv")
