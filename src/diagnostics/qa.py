@@ -282,6 +282,8 @@ def _plot_historical_vs_forward_pct_gdp(
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("% of GDP")
+    # Format with 1-decimal percent ticks to match annual charts
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1, decimals=1))
     ax.grid(True, alpha=0.3)
     ax.legend()
     ax.axvline(anchor_year + 0.0, color="k", linestyle="--", alpha=0.6)
@@ -289,6 +291,12 @@ def _plot_historical_vs_forward_pct_gdp(
     p = out_dir / ("historical_vs_forward_pct_gdp.png")
     fig.tight_layout()
     fig.savefig(p)
+    # Write simple metadata to aid tests
+    meta = {
+        "left_ticklabels": [t.get_text() for t in ax.get_yticklabels()],
+        "frame": frame,
+    }
+    p.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
     plt.close(fig)
     return p
 
