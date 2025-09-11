@@ -35,8 +35,11 @@
 - Centralize path joins in an `OutputPaths` helper to reduce churn and errors.
 
 ### T4. Add Historical vs Forward chart (R2)
-- Implement a visualization function to overlay historical and forward interest expense with shared units and styles.
-- Add vertical cutoff line with label (e.g., forecast start) based on last historical date.
+- Construct annual series by combining historical diagnostics with annualized forward monthly trace:
+  - Historical: use `diagnostics/interest_fy_totals.csv` and `diagnostics/interest_cy_totals.csv` up to the anchor date.
+  - Forward: aggregate the monthly trace table to FY and CY totals. If the anchor date falls mid-year, form the anchor-year total as (historical months YTD) + (forward months remaining) for that same year.
+- Overlay historical vs forward on a single chart with shared units/styles; include a legend that distinguishes historical and forward segments.
+- Add a vertical cutoff annotation at the anchor date (last historical month) with a label.
 - Save to `{run_dir}/visualizations/historical_vs_forward.png` and log the path.
 
 ### T5. Fix annual chart labels/formatting (R3)
