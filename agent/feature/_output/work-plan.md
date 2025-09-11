@@ -44,6 +44,13 @@
 - Save fiscal year results to `{run_dir}/fiscal_year/visualizations/historical_vs_forward.png` and `{run_dir}/fiscal_year/visualizations/historical_vs_forward_pct_gdp.png` and log the paths.
 - Save calendar year results to `{run_dir}/calendar_year/visualizations/historical_vs_forward.png` and `{run_dir}/calendar_year/visualizations/historical_vs_forward_pct_gdp.png` and log the paths.
 
+### T4b. Current‑year splice: show current year entirely as forward (R2)
+- For both FY and CY series, adjust the splice logic so that the current year is plotted entirely as forward.
+  - Compute current‑year forward total as (historical YTD months) + (forward remaining months) for that year.
+  - Exclude the current year from the historical series; truncate historical at the end of the previous year.
+- Keep the cutoff annotation at the anchor month and preserve legend distinctions.
+- Outputs: reuse T4 destinations (FY/CY USD and %GDP charts). For this run, the result should show historical ending after 2024 and forward beginning in 2025.
+
 ### T5. Fix annual chart labels/formatting (R3)
 - In the annual FY and CY chart generation code:
   - Set right y-axis title to `USD trillions`.
