@@ -22,3 +22,22 @@ def test_annualize_cy_fy_pct() -> None:
     assert (fy["pct_gdp"].between(0, 1)).all()
 
 
+def test_annual_charts_labels_and_format(tmp_path: Path) -> None:
+    # Create simple annual CSV
+    years = [2024, 2025]
+    df = pd.DataFrame({"year": years, "interest": [2_000_000.0, 3_000_000.0], "gdp": [50_000_000.0, 52_000_000.0]})
+    df["pct_gdp"] = df["interest"] / df["gdp"]
+    out_dir = tmp_path / "fiscal_year" / "visualizations"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv = tmp_path / "fiscal_year" / "spreadsheets" / "annual.csv"
+    csv.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(csv, index=False)
+    from diagnostics.qa import _plot_annual
+    p = _plot_annual(csv, out_dir, "Annual FY Interest and %GDP")
+    assert p.exists()
+    meta = json.loads(p.with_suffix(".meta.json").read_text())
+    assert meta["right_ylabel"] == "USD trillions"
+    # Check at least one tick shows one decimal percent (e.g., '0.1%')
+    assert any(("%" in t and "." in t) for t in meta["left_ticklabels"])
+
+

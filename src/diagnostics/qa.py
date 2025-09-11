@@ -6,6 +6,7 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 import pandas as pd
 import json
+from matplotlib.ticker import PercentFormatter
 
 from core.dates import fiscal_year
 from macro.config import load_macro_yaml
@@ -72,17 +73,27 @@ def _plot_annual(annual_path: str | Path, out_dir: Path, title: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(annual_path)
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(df["year"], df["interest"], marker="o", label="Interest")
+    # Left axis: % of GDP with 1-decimal percent formatter
+    ax.plot(df["year"], df["pct_gdp"], color="tab:red", marker="s", label="% of GDP")
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1, decimals=1))
+    ax.set_ylabel("% of GDP")
+    # Right axis: USD trillions (interest is in USD millions in CSV)
     ax2 = ax.twinx()
-    ax2.plot(df["year"], df["pct_gdp"], color="tab:red", marker="s", label="% of GDP")
+    interest_trn = (df["interest"].astype(float) / 1_000_000.0)
+    ax2.plot(df["year"], interest_trn, marker="o", label="Interest")
+    ax2.set_ylabel("USD trillions")
     ax.set_title(title)
     ax.set_xlabel("Year")
-    ax.set_ylabel("USD millions")
-    ax2.set_ylabel("% of GDP")
     ax.grid(True, alpha=0.3)
     p = out_dir / ("annual_" + ("cy" if "calendar_year" in str(out_dir) else "fy") + ".png")
     fig.tight_layout()
     fig.savefig(p)
+    # Write minimal metadata for verification in tests
+    meta = {
+        "right_ylabel": ax2.get_ylabel(),
+        "left_ticklabels": [t.get_text() for t in ax.get_yticklabels()],
+    }
+    p.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
     plt.close(fig)
     return p
 
@@ -188,15 +199,17 @@ def _plot_historical_vs_forward(
 
     # Plot
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(hist_series.index, hist_series.values, label="Historical", color="tab:blue", marker="o")
-    ax.plot(fwd_series.index, fwd_series.values, label="Forward", color="tab:orange", marker="s")
+    # Convert from USD millions to USD trillions for readability
+    scale = 1_000_000.0
+    ax.plot(hist_series.index, (hist_series.values / scale), label="Historical", color="tab:blue", marker="o")
+    ax.plot(fwd_series.index, (fwd_series.values / scale), label="Forward", color="tab:orange", marker="s")
     if frame == "FY":
         ax.set_title("Historical vs Forward Interest (FY)")
         ax.set_xlabel("Fiscal Year")
     else:
         ax.set_title("Historical vs Forward Interest (CY)")
         ax.set_xlabel("Calendar Year")
-    ax.set_ylabel("USD millions")
+    ax.set_ylabel("USD trillions")
     ax.grid(True, alpha=0.3)
     ax.legend()
 

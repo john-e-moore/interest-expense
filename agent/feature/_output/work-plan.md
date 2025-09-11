@@ -49,7 +49,7 @@
   - Set right y-axis title to `USD trillions`.
   - Format % GDP axis ticks with 1 decimal using a matplotlib percent formatter with `xmax=1`.
 - Ensure both `annual_fy.png` and `annual_cy.png` are saved under the timestamped structure.
-- Make the same y-axis label change for all of the historical_vs_forward charts.
+- Make the same y-axis label change (trillions instead of millions) for all of the historical_vs_forward charts.
 
 ### T6. CLI enhancements and plumbing (R1, R4)
 - Add `--debug` flag to `scripts/run_forward.py` to elevate logging level.
