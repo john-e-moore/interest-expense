@@ -8,6 +8,7 @@ import math
 import numpy as np
 import pandas as pd
 
+from core.dates import fiscal_year
 
 REQUIRED_RATE_COLS: Tuple[str, str, str] = ("short", "nb", "tips")
 
@@ -102,4 +103,47 @@ def write_rates_preview(provider, index: Iterable[pd.Timestamp], out_path: str =
     df.to_csv(out, index=True)
     return out
 
+
+
+@dataclass
+class FiscalYearVariableRatesProvider:
+    """Piecewise-constant FY-based rates provider.
+
+    - Accepts FY-annualized decimals for buckets: short, nb, tips
+    - Expands to monthly by mapping each month to its fiscal year and applying the
+      corresponding FY rate. If an FY is not present, uses nearest-known behavior:
+        * for years above max provided → use max provided FY's value
+        * for years below min provided → use min provided FY's value
+    """
+
+    mapping: Dict[str, Dict[int, float]]  # bucket -> {FY: decimal}
+
+    def get(self, index: Iterable[pd.Timestamp]) -> pd.DataFrame:
+        idx = pd.to_datetime(pd.DatetimeIndex(index)).to_period("M").to_timestamp()
+        fy_index = pd.Index([fiscal_year(ts) for ts in idx], name="fy")
+
+        buckets = list(REQUIRED_RATE_COLS)
+        data = {b: [] for b in buckets}
+        for fy in fy_index:
+            for b in buckets:
+                series = self.mapping.get(b, {})
+                if not series:
+                    raise ValueError(f"No variable rates provided for bucket '{b}'")
+                years = sorted(series)
+                if fy in series:
+                    val = float(series[fy])
+                elif fy < years[0]:
+                    val = float(series[years[0]])
+                else:
+                    # Use last known for fy > max
+                    val = float(series[years[-1]])
+                if not math.isfinite(val):
+                    raise ValueError(f"Non-finite rate for {b} FY{fy}: {val}")
+                data[b].append(val)
+
+        df = pd.DataFrame(data, index=idx)
+        _assert_required_columns(df)
+        _assert_finite(df)
+        df.index.name = "date"
+        return df
 
