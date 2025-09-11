@@ -133,12 +133,10 @@ def _compose_hist_vs_forward_series(
         df["Y"] = df.index.year
         year_col = "Calendar Year"
 
-    # Only consider months at/after anchor month start
+    # Determine anchor month start
     anchor = pd.Timestamp(anchor_date).to_period("M").to_timestamp()
-    df = df.loc[df.index >= anchor]
-
-    # Forward annualized
-    fwd = df.groupby("Y", as_index=True)[total_col].sum()
+    # Forward remainder: only months at/after anchor
+    fwd_remainder = df.loc[df.index >= anchor].groupby("Y", as_index=True)[total_col].sum()
 
     # Historical totals (up to anchor date) – assume provided file is YTD for anchor year
     if year_col not in hist_df.columns or "Interest Expense" not in hist_df.columns:
@@ -154,26 +152,27 @@ def _compose_hist_vs_forward_series(
     anchor_year = int(anchor.year if frame == "CY" else fiscal_year(anchor))
 
     # Build aligned year index covering both
-    years = sorted(set(hist_tbl.index.tolist()) | set(fwd.index.tolist()))
-    # Historical part: years < anchor_year use full historical; anchor_year uses hist YTD
+    years = sorted(set(hist_tbl.index.tolist()) | set(fwd_remainder.index.tolist()))
+    # Historical part (T4b): years < anchor_year use full historical; anchor_year excluded
     hist_series = pd.Series(index=years, dtype=float)
     for y in years:
         if y < anchor_year:
             hist_series.loc[y] = float(hist_tbl.get(y, float("nan")))
         elif y == anchor_year:
-            hist_series.loc[y] = float(hist_tbl.get(y, 0.0))
+            # Exclude current year from historical (plot as forward)
+            hist_series.loc[y] = float("nan")
         else:
             hist_series.loc[y] = float("nan")
 
-    # Forward part: anchor remainder + full years after
+    # Forward part (T4b): anchor year = historical YTD + forward remainder; years after = forward totals
     fwd_series = pd.Series(index=years, dtype=float)
     for y in years:
         if y < anchor_year:
             fwd_series.loc[y] = float("nan")
         elif y == anchor_year:
-            fwd_series.loc[y] = float(fwd.get(y, 0.0))
+            fwd_series.loc[y] = float(fwd_remainder.get(y, 0.0)) + float(hist_tbl.get(y, 0.0))
         else:
-            fwd_series.loc[y] = float(fwd.get(y, float("nan")))
+            fwd_series.loc[y] = float(fwd_remainder.get(y, float("nan")))
 
     return hist_series, fwd_series, anchor_year
 

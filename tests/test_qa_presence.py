@@ -24,17 +24,15 @@ def test_compose_hist_vs_forward_series_anchor_splice() -> None:
     anchor = pd.Timestamp("2025-07-15")
     hist_s, fwd_s, anchor_year = _compose_hist_vs_forward_series(df, hist, anchor_date=anchor, frame="FY")
     assert anchor_year == 2025
-    # Historical should carry 2024 full and 2025 YTD
+    # Historical should carry 2024 full and exclude 2025 (current year moved to forward)
     assert hist_s.loc[2024] == 1200.0
-    assert hist_s.loc[2025] == 200.0
-    # Forward should include 2025 forward remainder only (months at/after anchor month)
-    # For FY, remainder is months in anchor FY (Oct-Sep) at/after anchor month
+    assert pd.isna(hist_s.loc[2025])
+    # Forward should include full current FY (YTD + remainder) for 2025 and remainder for 2026
     from core.dates import fiscal_year as _fy
-    fwd_2025 = float(df.loc[(df.index >= anchor.to_period("M").to_timestamp()) & (df.index.map(_fy) == 2025), "interest_total"].sum())
-    assert fwd_s.loc[2025] == fwd_2025
-    # For FY 2026, include months in FY2026 (Oct 2025–Sep 2026) at/after anchor
-    fy_2026_sum = float(df.loc[(df.index >= anchor.to_period("M").to_timestamp()) & (df.index.map(_fy) == 2026), "interest_total"].sum())
-    assert fwd_s.loc[2026] == fy_2026_sum
+    fy_2025_full = float(df.loc[df.index.map(_fy) == 2025, "interest_total"].sum()) + 200.0  # YTD 200 + remainder from df
+    assert fwd_s.loc[2025] == fy_2025_full
+    fy_2026_remainder = float(df.loc[(df.index >= anchor.to_period("M").to_timestamp()) & (df.index.map(_fy) == 2026), "interest_total"].sum())
+    assert fwd_s.loc[2026] == fy_2026_remainder
 
 
 def test_run_qa_writes_hist_vs_forward(tmp_path: Path) -> None:
