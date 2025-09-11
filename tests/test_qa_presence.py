@@ -64,6 +64,9 @@ horizon_months: 12
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 28000000
+  annual_fy_growth_rate:
+    2025: 4.0
+    2026: 4.0
 deficits:
   frame: FY
 rates:
@@ -93,5 +96,9 @@ issuance_default_shares:
     assert (cy_vis / "historical_vs_forward.png").exists()
     assert (fy_vis / "historical_vs_forward_pct_gdp.png").exists()
     assert (cy_vis / "historical_vs_forward_pct_gdp.png").exists()
+    # Inspect FY %GDP y-axis tick labels to ensure low percent scale consistent with growing GDP
+    meta = json.loads((fy_vis / "historical_vs_forward_pct_gdp.meta.json").read_text())
+    # Expect percent tick labels to include values around 0-3% range
+    assert any(lbl.endswith("%") for lbl in meta["left_ticklabels"])  # formatting present
 
 
