@@ -253,7 +253,7 @@ def _plot_historical_vs_forward_pct_gdp(
     hist_series, fwd_series, anchor_year = _compose_hist_vs_forward_series(
         monthly_df, hist, anchor_date=cfg.anchor_date, frame=frame
     )
-    # Build a simple GDP model with flat growth if growth path is not provided
+    # Build GDP model using FY growth from config when available; otherwise flat
     years = list(hist_series.index)
     if years:
         min_year = int(min(years))
@@ -261,8 +261,26 @@ def _plot_historical_vs_forward_pct_gdp(
     else:
         min_year = int(cfg.gdp_anchor_fy)
         max_year = int(cfg.gdp_anchor_fy)
-    # Provide flat growth for all years we might reference when moving forward/backward
-    growth_fy = {int(y): 0.0 for y in range(min_year, max_year + 2)}
+
+    if getattr(cfg, "gdp_annual_fy_growth_rate", None):
+        # Config growth is percent; convert to decimals and fill coverage for [min_year, max_year+1]
+        provided = {int(y): float(v) / 100.0 for y, v in cfg.gdp_annual_fy_growth_rate.items()}
+        years_needed = list(range(min_year, max_year + 2))
+        # Forward-fill from earliest provided for years below; then step through years needed
+        if provided:
+            sorted_keys = sorted(provided)
+            current = provided.get(sorted_keys[0], 0.0)
+        else:
+            current = 0.0
+        growth_fy = {}
+        for y in years_needed:
+            if y in provided:
+                current = provided[y]
+            growth_fy[y] = current
+    else:
+        # Flat growth across coverage
+        growth_fy = {int(y): 0.0 for y in range(min_year, max_year + 2)}
+
     gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
     if frame == "FY":
         denom = hist_series.index.map(gdp_model.gdp_fy)

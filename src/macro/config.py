@@ -38,6 +38,13 @@ class MacroConfig:
     # Optional constant rates for early validation (annualized, decimals)
     rates_constant: Optional[Tuple[float, float, float]] = None
 
+    # Optional FY-based GDP growth map (percent, not decimals): {FY: pct}
+    gdp_annual_fy_growth_rate: Optional[Dict[int, float]] = None
+
+    # Optional FY-based variable rates (percent, not decimals): {bucket: {FY: pct}}
+    # bucket keys normalized to lowercase: short, nb, tips
+    variable_rates_annual: Optional[Dict[str, Dict[int, float]]] = None
+
     def to_normalized_dict(self) -> Dict[str, object]:
         data = asdict(self)
         data["anchor_date"] = self.anchor_date.isoformat()
@@ -49,6 +56,14 @@ class MacroConfig:
         if self.rates_constant is not None:
             bs, nb, tips = self.rates_constant
             data["rates_constant"] = {"short": bs, "nb": nb, "tips": tips}
+        # Keep FY growth and variable rates as provided (percent), with normalized keys
+        if self.gdp_annual_fy_growth_rate is not None:
+            data["gdp_annual_fy_growth_rate"] = {int(k): float(v) for k, v in self.gdp_annual_fy_growth_rate.items()}
+        if self.variable_rates_annual is not None:
+            vr: Dict[str, Dict[int, float]] = {}
+            for k, m in self.variable_rates_annual.items():
+                vr[k] = {int(yy): float(val) for yy, val in m.items()}
+            data["variable_rates_annual"] = vr
         return data
 
 
@@ -102,6 +117,37 @@ def _validate_rates_constant(values: Dict[str, object]) -> Tuple[float, float, f
     return short, nb, tips
 
 
+def _validate_fy_growth_map(values: Dict[object, object], *, field: str) -> Dict[int, float]:
+    if not isinstance(values, dict):
+        raise ValueError(f"{field} must be a mapping of FY->percent")
+    out: Dict[int, float] = {}
+    for k, v in values.items():
+        try:
+            year = int(k)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"{field} keys must be integers (FY years), got {k!r}") from exc
+        val = float(v)  # type: ignore[arg-type]
+        if not _finite(val):
+            raise ValueError(f"{field}[{year}] must be finite, got {val}")
+        out[year] = val
+    return out
+
+
+def _validate_variable_rates_annual(values: Dict[str, object]) -> Dict[str, Dict[int, float]]:
+    if not isinstance(values, dict):
+        raise ValueError("variable_rates_annual must be a mapping of bucket->{FY->percent}")
+    out: Dict[str, Dict[int, float]] = {}
+    for bucket, mapping in values.items():
+        if not isinstance(mapping, dict):
+            raise ValueError(f"variable_rates_annual[{bucket!r}] must be a mapping of FY->percent")
+        key = str(bucket).lower()
+        if key not in {"short", "nb", "tips"}:
+            # Allow forward-compat; accept unknown keys but keep normalized
+            key = key
+        out[key] = _validate_fy_growth_map(mapping, field=f"variable_rates_annual[{key}]")
+    return out
+
+
 def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     """Load and validate macro configuration from YAML.
 
@@ -133,6 +179,12 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     if not _finite(gdp_anchor_value) or gdp_anchor_value <= 0:
         raise ValueError("gdp.anchor_value_usd_millions must be positive and finite")
 
+    gdp_annual_fy_growth_rate: Optional[Dict[int, float]] = None
+    if isinstance(gdp.get("annual_fy_growth_rate"), dict):
+        gdp_annual_fy_growth_rate = _validate_fy_growth_map(
+            gdp["annual_fy_growth_rate"], field="gdp.annual_fy_growth_rate"  # type: ignore[index]
+        )
+
     deficits = raw.get("deficits")
     if not isinstance(deficits, dict) or "frame" not in deficits:
         raise ValueError("deficits.frame must be provided and be 'FY' or 'CY'")
@@ -153,6 +205,11 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
             raise ValueError("rates.values must be a mapping when type is 'constant'")
         rates_constant = _validate_rates_constant(values)
 
+    # Optional FY-based variable rates (percent)
+    variable_rates_annual: Optional[Dict[str, Dict[int, float]]] = None
+    if isinstance(raw.get("variable_rates_annual"), dict):
+        variable_rates_annual = _validate_variable_rates_annual(raw["variable_rates_annual"])  # type: ignore[index]
+
     return MacroConfig(
         anchor_date=anchor_date,
         horizon_months=horizon_months,
@@ -161,6 +218,8 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         deficits_frame=frame,  # type: ignore[arg-type]
         issuance_default_shares=issuance_default_shares,
         rates_constant=rates_constant,
+        gdp_annual_fy_growth_rate=gdp_annual_fy_growth_rate,
+        variable_rates_annual=variable_rates_annual,
     )
 
 

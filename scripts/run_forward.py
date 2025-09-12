@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
 from macro.config import load_macro_yaml, write_config_echo
 from core.run_dir import create_run_directory
 from core.logging_utils import setup_run_logger, get_git_sha, log_run_start, log_run_end
-from macro.rates import build_month_index, ConstantRatesProvider, write_rates_preview
+from macro.rates import build_month_index, ConstantRatesProvider, FiscalYearVariableRatesProvider, write_rates_preview
 from macro.issuance import FixedSharesPolicy, write_issuance_preview
 from engine.state import DebtState
 from engine.project import ProjectionEngine
@@ -62,9 +62,18 @@ def main() -> None:
     idx = build_month_index(cfg.anchor_date, horizon)
 
     # Providers
-    if cfg.rates_constant is None:
-        raise SystemExit("macro.yaml must provide constant rates for this step")
-    rp = ConstantRatesProvider({"short": cfg.rates_constant[0], "nb": cfg.rates_constant[1], "tips": cfg.rates_constant[2]})
+    # Rates provider: prefer FY variable rates if provided; else fall back to constant
+    if getattr(cfg, "variable_rates_annual", None):
+        # cfg.variable_rates_annual provided in percent; convert to decimals
+        vr = {k: {int(y): float(v) for y, v in m.items()} for k, m in cfg.variable_rates_annual.items()}
+        # ensure required keys exist, else default to zero? Here require keys
+        if not all(b in vr for b in ("short", "nb", "tips")):
+            raise SystemExit("variable_rates_annual must include short, nb, tips")
+        rp = FiscalYearVariableRatesProvider(vr)
+    else:
+        if cfg.rates_constant is None:
+            raise SystemExit("macro.yaml must provide either variable_rates_annual or constant rates")
+        rp = ConstantRatesProvider({"short": cfg.rates_constant[0], "nb": cfg.rates_constant[1], "tips": cfg.rates_constant[2]})
     rates_preview_path = run_dir / "diagnostics" / "rates_preview.csv"
     write_rates_preview(rp, idx, out_path=str(rates_preview_path))
     logger.debug("RATES PREVIEW path=%s months=%d", str(rates_preview_path), len(idx))
@@ -165,11 +174,23 @@ def main() -> None:
     print(df.tail(3))
 
     # Step 11: Annualization & % of GDP
-    # Build GDP model; if macro.yaml lacks forward growth, assume 0 growth for required years
-    # Determine required FY/CY years from the projection index
+    # Build GDP model using FY growth from config when available; otherwise default to 0 growth
     years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
     anchor_fy = pd.Timestamp(cfg.anchor_date).year if hasattr(cfg, "anchor_date") else idx[0].year
-    growth_fy = {y: 0.0 for y in years_needed if y >= anchor_fy}
+    if getattr(cfg, "gdp_annual_fy_growth_rate", None):
+        # Config growth provided in percent; convert to decimals
+        growth_fy = {int(y): float(v) / 100.0 for y, v in cfg.gdp_annual_fy_growth_rate.items()}
+        # Ensure coverage for needed years by forward/backfilling edges
+        min_y, max_y = min(growth_fy), max(growth_fy)
+        growth_full = {}
+        last = growth_fy.get(min_y, 0.0)
+        for y in sorted(set([*years_needed, *growth_fy.keys()])):
+            if y in growth_fy:
+                last = growth_fy[y]
+            growth_full[y] = last if y >= anchor_fy else last
+        growth_fy = growth_full
+    else:
+        growth_fy = {y: 0.0 for y in years_needed if y >= anchor_fy}
     gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
 
     # Use interest including OTHER for totals

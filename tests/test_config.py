@@ -35,6 +35,20 @@ rates:
     short: 0.03
     nb: 0.04
     tips: 0.02
+gdp:
+  anchor_fy: 2025
+  anchor_value_usd_millions: 30000000
+  annual_fy_growth_rate:
+    2025: 4.0
+    2026: 3.6
+variable_rates_annual:
+  short:
+    2025: 4.25
+    2026: 3.75
+  nb:
+    2025: 4.60
+  tips:
+    2025: 2.10
 """,
     )
 
@@ -42,12 +56,20 @@ rates:
     assert cfg.horizon_months == 24
     assert cfg.gdp_anchor_fy == 2025
     assert cfg.deficits_frame in {"FY", "CY"}
+    # New fields present
+    assert cfg.gdp_annual_fy_growth_rate is not None
+    assert cfg.gdp_annual_fy_growth_rate[2025] == 4.0
+    assert cfg.variable_rates_annual is not None
+    assert cfg.variable_rates_annual["short"][2025] == 4.25
 
     out = write_config_echo(cfg, out_path=tmp_path / "config_echo.json")
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["units"]["scale"] == "millions"
     assert data["gdp_anchor_value_usd_millions"] > 0
     assert set(data["issuance_default_shares"].keys()) == {"short", "nb", "tips"}
+    # Echo includes new fields
+    assert data["gdp_annual_fy_growth_rate"]["2025"] == 4.0
+    assert data["variable_rates_annual"]["short"]["2025"] == 4.25
 
 
 def test_missing_required_sections_raises(tmp_path: Path) -> None:
@@ -106,6 +128,46 @@ rates:
     short: .nan
     nb: 0.02
     tips: 0.01
+""",
+    )
+    with pytest.raises(ValueError):
+        load_macro_yaml(cfg_path)
+
+
+def test_invalid_growth_map_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "macro.yaml"
+    write_yaml(
+        cfg_path,
+        """
+anchor_date: 2025-07-01
+horizon_months: 24
+gdp:
+  anchor_fy: 2025
+  anchor_value_usd_millions: 100.0
+  annual_fy_growth_rate:
+    bad_year: 3.0
+deficits:
+  frame: FY
+""",
+    )
+    with pytest.raises(ValueError):
+        load_macro_yaml(cfg_path)
+
+
+def test_invalid_variable_rates_annual_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "macro.yaml"
+    write_yaml(
+        cfg_path,
+        """
+anchor_date: 2025-07-01
+horizon_months: 24
+gdp:
+  anchor_fy: 2025
+  anchor_value_usd_millions: 100.0
+deficits:
+  frame: FY
+variable_rates_annual:
+  short: 2.0  # must be mapping
 """,
     )
     with pytest.raises(ValueError):
