@@ -23,7 +23,14 @@ from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from macro.deficits import build_primary_deficit_series, write_deficits_preview
 from macro.other_interest import build_other_interest_series, write_other_interest_preview
-from diagnostics.qa import run_qa, write_hist_forward_breakdown, write_hist_forward_breakdown_monthly, _read_monthly_trace
+from diagnostics.qa import (
+    run_qa,
+    write_hist_forward_breakdown,
+    write_hist_forward_breakdown_monthly,
+    write_historical_shares,
+    write_historical_effective_rates,
+    _read_monthly_trace,
+)
 from diagnostics.uat import run_uat
 
 
@@ -293,6 +300,16 @@ def main() -> None:
             anchor_date=pd.Timestamp(cfg.anchor_date),
             frame="CY",
             out_path=run_dir / "calendar_year" / "spreadsheets" / "monthly_breakdown.csv",
+        )
+
+        # Historical convenience diagnostics (shares and effective rates)
+        shares_path = run_dir / "diagnostics" / "historical_shares.csv"
+        write_historical_shares(run_dir / "diagnostics" / "interest_monthly_by_category.csv", shares_path)
+        rates_eff_path = run_dir / "diagnostics" / "historical_effective_rates.csv"
+        write_historical_effective_rates(
+            run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
+            rates_eff_path,
         )
 
     # Optional UAT checklist

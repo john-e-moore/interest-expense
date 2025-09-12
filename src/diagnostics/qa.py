@@ -516,6 +516,88 @@ def write_hist_forward_breakdown_monthly(
     return p
 
 
+def write_historical_shares(
+    hist_monthly_path: str | Path,
+    out_path: str | Path,
+) -> Path:
+    """
+    Compute historical issuance shares by bucket from monthly interest by category.
+
+    Output columns: date, share_short, share_nb, share_tips
+    where shares are interest by bucket divided by sum over SHORT/NB/TIPS for that month.
+    """
+    df = pd.read_csv(hist_monthly_path, parse_dates=["Record Date"]).sort_values("Record Date")
+    keep = df[df["Debt Category"].isin(["SHORT", "NB", "TIPS"])].copy()
+    keep["Record Date"] = keep["Record Date"].dt.to_period("M").dt.to_timestamp()
+    piv = keep.pivot_table(
+        index="Record Date", columns="Debt Category", values="Interest Expense", aggfunc="sum"
+    ).fillna(0.0)
+    piv = piv.rename(columns={"SHORT": "short", "NB": "nb", "TIPS": "tips"})
+    total = piv[["short", "nb", "tips"]].sum(axis=1).replace(0.0, pd.NA)
+    shares = pd.DataFrame(index=piv.index)
+    shares["share_short"] = (piv["short"] / total).astype(float)
+    shares["share_nb"] = (piv["nb"] / total).astype(float)
+    shares["share_tips"] = (piv["tips"] / total).astype(float)
+    shares = shares.reset_index().rename(columns={"Record Date": "date"})
+    p = Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    shares.to_csv(p, index=False)
+    return p
+
+
+def write_historical_effective_rates(
+    hist_monthly_path: str | Path,
+    stocks_path: str | Path,
+    out_path: str | Path,
+) -> Path:
+    """
+    Compute historical effective rates by bucket using historical interest and stocks:
+    rate_bucket_m = interest_bucket_month / stock_bucket_month; also annualized = *12.
+
+    Output columns:
+      date, rate_short_m, rate_nb_m, rate_tips_m, rate_total_m,
+      rate_short_a, rate_nb_a, rate_tips_a, rate_total_a
+    """
+    # Interest by category
+    df = pd.read_csv(hist_monthly_path, parse_dates=["Record Date"]).sort_values("Record Date")
+    keep = df[df["Debt Category"].isin(["SHORT", "NB", "TIPS"])].copy()
+    keep["Record Date"] = keep["Record Date"].dt.to_period("M").dt.to_timestamp()
+    piv = keep.pivot_table(
+        index="Record Date", columns="Debt Category", values="Interest Expense", aggfunc="sum"
+    ).fillna(0.0)
+    piv = piv.rename(columns={"SHORT": "interest_short", "NB": "interest_nb", "TIPS": "interest_tips"})
+
+    # Stocks by bucket (scaled)
+    s = pd.read_csv(stocks_path, parse_dates=["Record Date"]).sort_values("Record Date")
+    s["Record Date"] = s["Record Date"].dt.to_period("M").dt.to_timestamp()
+    s = s.set_index("Record Date")[ ["stock_short", "stock_nb", "stock_tips"] ]
+
+    merged = piv.join(s, how="inner")
+    # Effective monthly rates
+    rate_short_m = (merged["interest_short"] / merged["stock_short"]).astype(float)
+    rate_nb_m = (merged["interest_nb"] / merged["stock_nb"]).astype(float)
+    rate_tips_m = (merged["interest_tips"] / merged["stock_tips"]).astype(float)
+    total_interest = merged[["interest_short", "interest_nb", "interest_tips"]].sum(axis=1)
+    total_stock = merged[["stock_short", "stock_nb", "stock_tips"]].sum(axis=1).replace(0.0, pd.NA)
+    rate_total_m = (total_interest / total_stock).astype(float)
+
+    out = pd.DataFrame(
+        {
+            "date": merged.index,
+            "rate_short_m": rate_short_m.values,
+            "rate_nb_m": rate_nb_m.values,
+            "rate_tips_m": rate_tips_m.values,
+            "rate_total_m": rate_total_m.values,
+        }
+    )
+    for col in ["rate_short_m", "rate_nb_m", "rate_tips_m", "rate_total_m"]:
+        out[col.replace("_m", "_a")] = out[col] * 12.0
+    p = Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(p, index=False)
+    return p
+
+
 def run_qa(
     monthly_trace_path: str | Path = "output/diagnostics/monthly_trace.parquet",
     annual_cy_path: str | Path = "output/calendar_year/spreadsheets/annual.csv",
