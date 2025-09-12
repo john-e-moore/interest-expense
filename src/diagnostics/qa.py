@@ -377,6 +377,8 @@ def write_hist_forward_breakdown(
     anchor_date: pd.Timestamp,
     frame: str,
     out_path: str | Path,
+    hist_monthly_path: str | Path | None = None,
+    stocks_path: str | Path | None = None,
 ) -> Path:
     """
     Write a spreadsheet with columns:
@@ -423,6 +425,75 @@ def write_hist_forward_breakdown(
     out["historical_pct_gdp"] = out["interest_historical"] / out["gdp"]
     out["forward_pct_gdp"] = out["interest_forward"] / out["gdp"]
     out["total_pct_gdp"] = out["interest_total"] / out["gdp"]
+
+    # Optional effective rates per bucket and average (annualized effective levels)
+    if hist_monthly_path is not None and stocks_path is not None:
+        # Prepare monthly bucket interest and stocks
+        df = monthly_df.copy()
+        df.index = pd.to_datetime(pd.DatetimeIndex(df.index)).to_period("M").to_timestamp()
+        fwd_bucket = df[["interest_short", "interest_nb", "interest_tips"]].astype(float)
+        fwd_stocks = df[["stock_short", "stock_nb", "stock_tips"]].astype(float)
+        hm = pd.read_csv(hist_monthly_path, parse_dates=["Record Date"]).sort_values("Record Date")
+        hm["Record Date"] = hm["Record Date"].dt.to_period("M").dt.to_timestamp()
+        keep = hm[hm["Debt Category"].isin(["SHORT", "NB", "TIPS"])].copy()
+        hist_piv = keep.pivot_table(index="Record Date", columns="Debt Category", values="Interest Expense", aggfunc="sum").fillna(0.0)
+        hist_piv = hist_piv.rename(columns={"SHORT": "interest_short", "NB": "interest_nb", "TIPS": "interest_tips"})
+        s = pd.read_csv(stocks_path, parse_dates=["Record Date"]).sort_values("Record Date")
+        s["Record Date"] = s["Record Date"].dt.to_period("M").dt.to_timestamp()
+        s = s.set_index("Record Date")[ ["stock_short", "stock_nb", "stock_tips"] ]
+        anchor = pd.Timestamp(anchor_date).to_period("M").to_timestamp()
+        # Ensure coverage includes any months present in historical stocks as well
+        months_all = sorted(
+            set(hist_piv.index.tolist())
+            | set(fwd_bucket.index.tolist())
+            | set(s.index.tolist())
+        )
+        # Build combined interest and stocks per month (hist before anchor; fwd at/after)
+        ib = pd.DataFrame(index=months_all)
+        for c in ["interest_short", "interest_nb", "interest_tips"]:
+            ib[c] = 0.0
+            if not hist_piv.empty:
+                ib.loc[ib.index < anchor, c] = hist_piv.reindex(ib.index).fillna(0.0)[c]
+            ib.loc[ib.index >= anchor, c] = fwd_bucket.reindex(ib.index).fillna(0.0)[c]
+        sb = pd.DataFrame(index=months_all)
+        sb[["stock_short", "stock_nb", "stock_tips"]] = float("nan")
+        if not s.empty:
+            _idx_s = pd.Index(months_all).intersection(s.index)
+            if len(_idx_s) > 0:
+                sb.loc[_idx_s, ["stock_short", "stock_nb", "stock_tips"]] = s.loc[_idx_s, ["stock_short", "stock_nb", "stock_tips"]]
+        _idx_f = pd.Index(months_all).intersection(fwd_stocks.index)
+        if len(_idx_f) > 0:
+            sb.loc[_idx_f, ["stock_short", "stock_nb", "stock_tips"]] = fwd_stocks.loc[_idx_f, ["stock_short", "stock_nb", "stock_tips"]]
+        # Annualize effective rates by summing interest and dividing by average stock per year
+        eff_short = []
+        eff_nb = []
+        eff_tips = []
+        eff_avg = []
+        for y in out["year"]:
+            if frame == "FY":
+                months = [d for d in months_all if fiscal_year(d) == int(y)]
+            else:
+                months = [d for d in months_all if pd.Timestamp(d).year == int(y)]
+            if not months:
+                eff_short.append(float("nan")); eff_nb.append(float("nan")); eff_tips.append(float("nan")); eff_avg.append(float("nan"))
+                continue
+            mb = ib.loc[months]
+            sbm = sb.loc[months]
+            rs = mb["interest_short"].sum() / (sbm["stock_short"].mean() or float("nan"))
+            rn = mb["interest_nb"].sum() / (sbm["stock_nb"].mean() or float("nan"))
+            rt = mb["interest_tips"].sum() / (sbm["stock_tips"].mean() or float("nan"))
+            tot_i = mb[["interest_short", "interest_nb", "interest_tips"]].sum(axis=1).sum()
+            tot_s = sbm[["stock_short", "stock_nb", "stock_tips"]].sum(axis=1).mean()
+            ravg = tot_i / tot_s if pd.notna(tot_s) and tot_s not in (0.0,) else float("nan")
+            eff_short.append(float(rs) if pd.notna(rs) else float("nan"))
+            eff_nb.append(float(rn) if pd.notna(rn) else float("nan"))
+            eff_tips.append(float(rt) if pd.notna(rt) else float("nan"))
+            eff_avg.append(float(ravg) if pd.notna(ravg) else float("nan"))
+        out["eff_rate_short"] = eff_short
+        out["eff_rate_nb"] = eff_nb
+        out["eff_rate_tips"] = eff_tips
+        out["eff_rate_avg"] = eff_avg
+
     p = Path(out_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(p, index=False)
@@ -437,6 +508,7 @@ def write_hist_forward_breakdown_monthly(
     anchor_date: pd.Timestamp,
     frame: str,
     out_path: str | Path,
+    stocks_path: str | Path | None = None,
 ) -> Path:
     """
     Monthly breakdown with columns:
@@ -510,6 +582,51 @@ def write_hist_forward_breakdown_monthly(
     out["historical_pct_gdp"] = out["interest_historical"] / out["gdp"]
     out["forward_pct_gdp"] = out["interest_forward"] / out["gdp"]
     out["total_pct_gdp"] = out["interest_total"] / out["gdp"]
+
+    # Optional effective rates per bucket and average (monthly values)
+    if stocks_path is not None:
+        # Historical bucket interest
+        hm2 = pd.read_csv(hist_monthly_path, parse_dates=["Record Date"]).sort_values("Record Date")
+        hm2["Record Date"] = hm2["Record Date"].dt.to_period("M").dt.to_timestamp()
+        piv_h = hm2.pivot_table(index="Record Date", columns="Debt Category", values="Interest Expense", aggfunc="sum").fillna(0.0)
+        piv_h = piv_h.rename(columns={"SHORT": "interest_short", "NB": "interest_nb", "TIPS": "interest_tips"})
+        # Forward bucket interest and stocks
+        df2 = monthly_df.copy()
+        df2.index = pd.to_datetime(pd.DatetimeIndex(df2.index)).to_period("M").to_timestamp()
+        fwd_b = df2[["interest_short", "interest_nb", "interest_tips"]].astype(float)
+        stocks_fwd = df2[["stock_short", "stock_nb", "stock_tips"]].astype(float)
+        # Stocks hist
+        s = pd.read_csv(stocks_path, parse_dates=["Record Date"]).sort_values("Record Date")
+        s["Record Date"] = s["Record Date"].dt.to_period("M").dt.to_timestamp()
+        s = s.set_index("Record Date")[ ["stock_short", "stock_nb", "stock_tips"] ]
+        # Combine per month
+        ishort = pd.Series(0.0, index=all_months)
+        inb = pd.Series(0.0, index=all_months)
+        itips = pd.Series(0.0, index=all_months)
+        ishort.loc[all_months[all_months < anchor]] = piv_h.reindex(all_months).fillna(0.0)["interest_short"].loc[all_months[all_months < anchor]].values
+        inb.loc[all_months[all_months < anchor]] = piv_h.reindex(all_months).fillna(0.0)["interest_nb"].loc[all_months[all_months < anchor]].values
+        itips.loc[all_months[all_months < anchor]] = piv_h.reindex(all_months).fillna(0.0)["interest_tips"].loc[all_months[all_months < anchor]].values
+        ishort.loc[all_months[all_months >= anchor]] = fwd_b.reindex(all_months).fillna(0.0)["interest_short"].loc[all_months[all_months >= anchor]].values
+        inb.loc[all_months[all_months >= anchor]] = fwd_b.reindex(all_months).fillna(0.0)["interest_nb"].loc[all_months[all_months >= anchor]].values
+        itips.loc[all_months[all_months >= anchor]] = fwd_b.reindex(all_months).fillna(0.0)["interest_tips"].loc[all_months[all_months >= anchor]].values
+        sshort = pd.Series(float("nan"), index=all_months)
+        snb = pd.Series(float("nan"), index=all_months)
+        stips = pd.Series(float("nan"), index=all_months)
+        _idx_hist = s.index.intersection(all_months)
+        if len(_idx_hist) > 0:
+            sshort.loc[_idx_hist] = s.loc[_idx_hist, "stock_short"]
+            snb.loc[_idx_hist] = s.loc[_idx_hist, "stock_nb"]
+            stips.loc[_idx_hist] = s.loc[_idx_hist, "stock_tips"]
+        _idx_fwd = stocks_fwd.index.intersection(all_months)
+        if len(_idx_fwd) > 0:
+            sshort.loc[_idx_fwd] = stocks_fwd.loc[_idx_fwd, "stock_short"]
+            snb.loc[_idx_fwd] = stocks_fwd.loc[_idx_fwd, "stock_nb"]
+            stips.loc[_idx_fwd] = stocks_fwd.loc[_idx_fwd, "stock_tips"]
+        out["eff_rate_short"] = (ishort / sshort).astype(float)
+        out["eff_rate_nb"] = (inb / snb).astype(float)
+        out["eff_rate_tips"] = (itips / stips).astype(float)
+        out["eff_rate_avg"] = ((ishort + inb + itips) / (sshort + snb + stips)).astype(float)
+
     p = Path(out_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(p, index=False)

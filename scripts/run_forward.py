@@ -271,6 +271,8 @@ def main() -> None:
             anchor_date=pd.Timestamp(cfg.anchor_date),
             frame="FY",
             out_path=run_dir / "fiscal_year" / "spreadsheets" / "annual_breakdown.csv",
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
         )
         # CY (annual)
         write_hist_forward_breakdown(
@@ -280,6 +282,8 @@ def main() -> None:
             anchor_date=pd.Timestamp(cfg.anchor_date),
             frame="CY",
             out_path=run_dir / "calendar_year" / "spreadsheets" / "annual_breakdown.csv",
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
         )
 
         # Monthly breakdowns
@@ -291,6 +295,7 @@ def main() -> None:
             anchor_date=pd.Timestamp(cfg.anchor_date),
             frame="FY",
             out_path=run_dir / "fiscal_year" / "spreadsheets" / "monthly_breakdown.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
         )
         # CY (monthly): same historical monthly source, but CY GDP mapping
         write_hist_forward_breakdown_monthly(
@@ -300,6 +305,7 @@ def main() -> None:
             anchor_date=pd.Timestamp(cfg.anchor_date),
             frame="CY",
             out_path=run_dir / "calendar_year" / "spreadsheets" / "monthly_breakdown.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
         )
 
         # Historical convenience diagnostics (shares and effective rates)
