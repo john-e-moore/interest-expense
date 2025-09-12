@@ -10,6 +10,7 @@ from matplotlib.ticker import PercentFormatter
 
 from core.dates import fiscal_year
 from macro.config import load_macro_yaml
+from macro.gdp import GDPModel
 
 
 def _read_monthly_trace(path: str | Path) -> pd.DataFrame:
@@ -366,6 +367,66 @@ def build_bridge_table(monthly_df: pd.DataFrame, macro_path: str | Path) -> pd.D
         ]
     )
     return bridge
+
+
+def write_hist_forward_breakdown(
+    monthly_df: pd.DataFrame,
+    hist_path: str | Path,
+    *,
+    gdp_model: GDPModel,
+    anchor_date: pd.Timestamp,
+    frame: str,
+    out_path: str | Path,
+) -> Path:
+    """
+    Write a spreadsheet with columns:
+      year, gdp, interest_historical, interest_forward, interest_total,
+      historical_pct_gdp, forward_pct_gdp, total_pct_gdp
+
+    - frame: "FY" or "CY"
+    - Uses the same splice logic as visuals: anchor year counts in forward.
+    """
+    if frame not in {"FY", "CY"}:
+        raise ValueError("frame must be 'FY' or 'CY'")
+    hist = pd.read_csv(hist_path)
+    hist_series, fwd_series, _anchor_year = _compose_hist_vs_forward_series(
+        monthly_df, hist, anchor_date=anchor_date, frame=frame
+    )
+    years = sorted(set(hist_series.index.tolist()) | set(fwd_series.index.tolist()))
+    hist_vals = pd.Series({y: float(hist_series.get(y)) for y in years})
+    fwd_vals = pd.Series({y: float(fwd_series.get(y)) for y in years})
+    # Build GDP per frame
+    def _safe_gdp_fy(y: int) -> float:
+        try:
+            return float(gdp_model.gdp_fy(int(y)))
+        except Exception:  # noqa: BLE001
+            return float("nan")
+    def _safe_gdp_cy(y: int) -> float:
+        try:
+            return float(gdp_model.gdp_cy(int(y)))
+        except Exception:  # noqa: BLE001
+            return float("nan")
+    if frame == "FY":
+        gdp_map = {int(y): _safe_gdp_fy(int(y)) for y in years}
+    else:
+        gdp_map = {int(y): _safe_gdp_cy(int(y)) for y in years}
+
+    out = pd.DataFrame(
+        {
+            "year": years,
+            "gdp": [gdp_map[int(y)] for y in years],
+            "interest_historical": [hist_vals.get(y) if pd.notna(hist_vals.get(y)) else float("nan") for y in years],
+            "interest_forward": [fwd_vals.get(y) if pd.notna(fwd_vals.get(y)) else float("nan") for y in years],
+        }
+    )
+    out["interest_total"] = out[["interest_historical", "interest_forward"]].fillna(0.0).sum(axis=1)
+    out["historical_pct_gdp"] = out["interest_historical"] / out["gdp"]
+    out["forward_pct_gdp"] = out["interest_forward"] / out["gdp"]
+    out["total_pct_gdp"] = out["interest_total"] / out["gdp"]
+    p = Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(p, index=False)
+    return p
 
 
 def run_qa(

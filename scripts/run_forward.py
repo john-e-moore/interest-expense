@@ -23,7 +23,7 @@ from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from macro.deficits import build_primary_deficit_series, write_deficits_preview
 from macro.other_interest import build_other_interest_series, write_other_interest_preview
-from diagnostics.qa import run_qa
+from diagnostics.qa import run_qa, write_hist_forward_breakdown, _read_monthly_trace
 from diagnostics.uat import run_uat
 
 
@@ -253,6 +253,27 @@ def main() -> None:
         )
         print("Wrote QA:", p1, p2, p3)
         logger.info("QA WRITE monthly_interest=%s effective_rate=%s bridge=%s", str(p1), str(p2), str(p3))
+
+        # Write historical vs forward breakdown spreadsheets (FY and CY)
+        monthly = _read_monthly_trace(run_dir / "diagnostics" / "monthly_trace.parquet")
+        # FY
+        write_hist_forward_breakdown(
+            monthly,
+            hist_path=run_dir / "diagnostics" / "interest_fy_totals.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="FY",
+            out_path=run_dir / "fiscal_year" / "spreadsheets" / "annual_breakdown.csv",
+        )
+        # CY
+        write_hist_forward_breakdown(
+            monthly,
+            hist_path=run_dir / "diagnostics" / "interest_cy_totals.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="CY",
+            out_path=run_dir / "calendar_year" / "spreadsheets" / "annual_breakdown.csv",
+        )
 
     # Optional UAT checklist
     if args.uat:
