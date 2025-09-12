@@ -42,6 +42,10 @@ class MacroConfig:
     other_interest_annual_pct_gdp: Optional[Dict[int, float]] = None
     other_interest_annual_usd_mn: Optional[Dict[int, float]] = None
 
+    # Issuance shares transition (default ON)
+    issuance_transition_enabled: bool = True
+    issuance_transition_months: int = 6
+
     # Optional default issuance shares to validate early (SHORT/NB/TIPS)
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
 
@@ -89,6 +93,11 @@ class MacroConfig:
         if self.other_interest_annual_usd_mn is not None:
             other_block["annual_usd_mn"] = {int(k): float(v) for k, v in self.other_interest_annual_usd_mn.items()}
         data["other_interest"] = other_block
+        # Issuance transition block
+        data["issuance_shares_transition"] = {
+            "enabled": self.issuance_transition_enabled,
+            "months": int(self.issuance_transition_months),
+        }
         return data
 
 
@@ -260,6 +269,19 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
             # USD millions directly; validate finite via growth map helper reuse
             other_interest_annual_usd_mn = _validate_fy_growth_map(other["annual_usd_mn"], field="other_interest.annual_usd_mn")
 
+    # Issuance transition (optional); default enabled
+    issuance_transition_enabled = True
+    issuance_transition_months = 6
+    trans = raw.get("issuance_shares_transition")
+    if isinstance(trans, dict):
+        if "enabled" in trans:
+            issuance_transition_enabled = bool(trans.get("enabled", True))
+        if "months" in trans:
+            try:
+                issuance_transition_months = max(1, int(trans.get("months", 6)))
+            except Exception:  # noqa: BLE001
+                issuance_transition_months = 6
+
     return MacroConfig(
         anchor_date=anchor_date,
         horizon_months=horizon_months,
@@ -271,6 +293,8 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         other_interest_frame=other_interest_frame,  # type: ignore[arg-type]
         other_interest_annual_pct_gdp=other_interest_annual_pct_gdp,
         other_interest_annual_usd_mn=other_interest_annual_usd_mn,
+        issuance_transition_enabled=issuance_transition_enabled,
+        issuance_transition_months=issuance_transition_months,
         issuance_default_shares=issuance_default_shares,
         rates_constant=rates_constant,
         gdp_annual_fy_growth_rate=gdp_annual_fy_growth_rate,

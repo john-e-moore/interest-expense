@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from macro.issuance import FixedSharesPolicy, PiecewiseSharesPolicy, write_issuance_preview
+from macro.issuance import FixedSharesPolicy, PiecewiseSharesPolicy, TransitionalSharesPolicy, write_issuance_preview
 from macro.rates import build_month_index
 
 
@@ -20,6 +20,20 @@ def test_fixed_shares_sum_to_one_and_shape() -> None:
 def test_fixed_shares_bounds_validation() -> None:
     with pytest.raises(ValueError):
         FixedSharesPolicy(0.7, 0.5, -0.2)
+
+
+def test_transitional_shares_interpolation_and_sum() -> None:
+    idx = build_month_index("2025-07-01", 6)
+    pol = TransitionalSharesPolicy(
+        start_short=0.5, start_nb=0.4, start_tips=0.1,
+        target_short=0.2, target_nb=0.7, target_tips=0.1,
+        months=4,
+    )
+    df = pol.get(idx)
+    # First month ≈ start, month 5+ equals target
+    assert abs(df.iloc[0].sum() - 1.0) < 1e-9
+    assert abs(df.iloc[0]["short"] - 0.5) < 1e-6
+    assert abs(df.iloc[4]["short"] - 0.2) < 1e-6
 
 
 def test_piecewise_behavior_changes_over_time() -> None:

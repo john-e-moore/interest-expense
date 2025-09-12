@@ -16,7 +16,7 @@ from macro.config import load_macro_yaml, write_config_echo
 from core.run_dir import create_run_directory
 from core.logging_utils import setup_run_logger, get_git_sha, log_run_start, log_run_end
 from macro.rates import build_month_index, ConstantRatesProvider, FiscalYearVariableRatesProvider, write_rates_preview
-from macro.issuance import FixedSharesPolicy, write_issuance_preview
+from macro.issuance import FixedSharesPolicy, TransitionalSharesPolicy, write_issuance_preview
 from engine.state import DebtState
 from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
@@ -80,7 +80,7 @@ def main() -> None:
     write_rates_preview(rp, idx, out_path=str(rates_preview_path))
     logger.debug("RATES PREVIEW path=%s months=%d", str(rates_preview_path), len(idx))
 
-    # Issuance shares: use fitted if present; else config defaults
+    # Issuance target shares: use fitted if present; else config defaults (build provider later)
     params_path = run_dir / "parameters.json"
     if params_path.exists():
         import json
@@ -88,15 +88,14 @@ def main() -> None:
         with params_path.open("r", encoding="utf-8") as f:
             params = json.load(f)
         s = params.get("issuance_shares", {})
-        issuance = FixedSharesPolicy(short=float(s.get("short", 0.2)), nb=float(s.get("nb", 0.7)), tips=float(s.get("tips", 0.1)))
+        target_short = float(s.get("short", 0.2))
+        target_nb = float(s.get("nb", 0.7))
+        target_tips = float(s.get("tips", 0.1))
     else:
         if cfg.issuance_default_shares is None:
             raise SystemExit("No parameters.json and no issuance_default_shares in macro.yaml")
-        short, nb, tips = cfg.issuance_default_shares
-        issuance = FixedSharesPolicy(short=short, nb=nb, tips=tips)
-    issuance_preview_path = run_dir / "diagnostics" / "issuance_preview.csv"
-    write_issuance_preview(issuance, idx, out_path=str(issuance_preview_path))
-    logger.debug("ISSUANCE PREVIEW path=%s", str(issuance_preview_path))
+        target_short, target_nb, target_tips = cfg.issuance_default_shares
+    # Build shares provider after stocks are loaded (below)
 
     # Start state from latest stocks (scaled) month. If scaled stocks are missing, build them
     # from MSPD outstanding and scale to FY interest totals using config rates.
@@ -161,6 +160,31 @@ def main() -> None:
     stocks = pd.read_csv(scaled_path, parse_dates=["Record Date"]).sort_values("Record Date")
     last = stocks.iloc[-1]
     start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
+
+    # Build shares provider: transitional by default using start_state composition
+    total_start = float(last["stock_short"]) + float(last["stock_nb"]) + float(last["stock_tips"]) 
+    if total_start <= 0:
+        start_short, start_nb, start_tips = 0.2, 0.7, 0.1
+    else:
+        start_short = float(last["stock_short"]) / total_start
+        start_nb = float(last["stock_nb"]) / total_start
+        start_tips = float(last["stock_tips"]) / total_start
+
+    if getattr(cfg, "issuance_transition_enabled", True):
+        issuance = TransitionalSharesPolicy(
+            start_short=start_short,
+            start_nb=start_nb,
+            start_tips=start_tips,
+            target_short=target_short,
+            target_nb=target_nb,
+            target_tips=target_tips,
+            months=int(getattr(cfg, "issuance_transition_months", 6)),
+        )
+    else:
+        issuance = FixedSharesPolicy(short=target_short, nb=target_nb, tips=target_tips)
+    issuance_preview_path = run_dir / "diagnostics" / "issuance_preview.csv"
+    write_issuance_preview(issuance, idx, out_path=str(issuance_preview_path))
+    logger.debug("ISSUANCE PREVIEW path=%s", str(issuance_preview_path))
 
     # Primary deficits: build from %GDP config (default to 0 if not provided)
     # Build GDP model first (also used later for annualization)

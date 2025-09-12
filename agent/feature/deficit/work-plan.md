@@ -44,12 +44,12 @@
 4) Tests
    - Verify annual sum consistency for fully covered years; partial-year proportionality at anchor.
 
-### Phase 3 — Optional Smooth Issuance-Share Transition (default OFF)
+### Phase 3 — Smooth Issuance-Share Transition (default ON)
 1) Policy
    - Implement `TransitionalSharesPolicy` that linearly interpolates from start_state shares to target shares over N months.
    - Ensure shares remain in [0,1] and sum to 1 (renormalize if necessary).
 2) Wiring
-   - When `issuance_shares_transition.enabled: true`, use the transitional policy in place of fixed shares.
+   - When `issuance_shares_transition.enabled` is not provided, default to true; use the transitional policy in place of fixed shares.
    - Write `issuance_transition_preview.csv` for the ramp window.
 3) Tests
    - Validate interpolation and normalization; simple scenario shows reduced jump at anchor.

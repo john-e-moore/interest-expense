@@ -79,12 +79,12 @@ other_interest:
 - Diagnostics: write `diagnostics/other_interest_preview.csv` with `date, frame, year_key, pct_gdp(optional), annual_usd_mn, monthly_usd_mn`.
 - Sanity: for fully covered years, monthly sum equals annual target; partial anchor year reconciles proportionally to months included.
 
-2) Smooth Issuance-Share Transitions
+2) Smooth Issuance-Share Transitions — DEFAULT ON
 - Purpose: Avoid abrupt changes in composition of issuance at the anchor (e.g., bills collapsing instantly). Linearly ramp shares from current effective mix to target shares over `N` months.
 - Config:
 ```yaml
 issuance_shares_transition:
-  enabled: false        # default false; when true, ramp shares
+  enabled: true         # default true; ramp shares unless explicitly disabled
   months: 6             # number of months to linearly interpolate (>=1)
 ```
 - Behavior:
