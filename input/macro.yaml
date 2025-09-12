@@ -35,7 +35,7 @@ gdp: # Nominal
     2053: 3.46
     2054: 3.43
     2055: 3.40
-deficits:
+deficits: # Primary deficit
   frame: FY  # FY or CY
 issuance_default_shares:
   short: 0.2
