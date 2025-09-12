@@ -56,12 +56,26 @@ def _plot_monthly_interest(df: pd.DataFrame, out_dir: Path) -> Path:
 
 def _plot_effective_rate(df: pd.DataFrame, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Compute monthly effective rate then aggregate to fiscal-year average (weighted by monthly stock)
     total_stock = df[["stock_short", "stock_nb", "stock_tips"]].sum(axis=1)
-    eff = (df["interest_total"].astype(float) / total_stock.replace(0.0, pd.NA)).astype(float)
+    monthly_rate = (df["interest_total"].astype(float) / total_stock.replace(0.0, pd.NA)).astype(float)
+    # Weighted FY average: sum(interest) / avg(stock) per FY equals sum(monthly_rate * stock) / sum(stock)
+    df_tmp = pd.DataFrame({
+        "rate": monthly_rate,
+        "stock": total_stock.astype(float),
+    }, index=pd.to_datetime(pd.DatetimeIndex(df.index)).to_period("M").to_timestamp())
+    df_tmp["FY"] = df_tmp.index.map(fiscal_year)
+    grouped = df_tmp.groupby("FY", as_index=True)
+    # Avoid division by zero
+    numer = (grouped.apply(lambda g: float((g["rate"] * g["stock"]).sum())))
+    denom = (grouped.apply(lambda g: float(g["stock"].sum())))
+    eff_fy = (numer / denom).astype(float) * 12.0
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(df.index, eff, label="Effective rate (monthly interest / avg stock)")
-    ax.set_title("Effective Interest Rate (Approx)")
-    ax.set_ylabel("per month (approx)")
+    ax.plot(eff_fy.index.astype(int), eff_fy.values, label="Effective rate (FY annualized)")
+    ax.set_title("Effective Interest Rate (FY annualized)")
+    ax.set_xlabel("Fiscal Year")
+    # Format as percentage with 1 decimal and remove y-axis title
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1, decimals=1))
     ax.grid(True, alpha=0.3)
     p = out_dir / "effective_rate.png"
     fig.tight_layout()
@@ -213,14 +227,7 @@ def _plot_historical_vs_forward(
     ax.grid(True, alpha=0.3)
     ax.legend()
 
-    # Vertical cutoff at anchor year between hist and fwd
-    ax.axvline(anchor_year + 0.0, color="k", linestyle="--", alpha=0.6)
-    ax.annotate(
-        "forecast starts",
-        xy=(anchor_year + 0.02, ax.get_ylim()[1] * 0.9),
-        fontsize=9,
-        color="k",
-    )
+    # Removed vertical cutoff line and label per updated design
 
     p = out_dir / "historical_vs_forward.png"
     fig.tight_layout()
@@ -305,8 +312,7 @@ def _plot_historical_vs_forward_pct_gdp(
     ax.yaxis.set_major_formatter(PercentFormatter(xmax=1, decimals=1))
     ax.grid(True, alpha=0.3)
     ax.legend()
-    ax.axvline(anchor_year + 0.0, color="k", linestyle="--", alpha=0.6)
-    ax.annotate("forecast starts", xy=(anchor_year + 0.02, ax.get_ylim()[1] * 0.9), fontsize=9, color="k")
+    # Removed vertical cutoff line and label per updated design
     p = out_dir / ("historical_vs_forward_pct_gdp.png")
     fig.tight_layout()
     fig.savefig(p)
