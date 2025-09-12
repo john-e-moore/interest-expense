@@ -32,6 +32,10 @@ class MacroConfig:
     # Frame for deficits and reporting inputs
     deficits_frame: FiscalFrame
 
+    # Optional annual primary deficits as percent of GDP by year (percent, not decimal)
+    # Interpreted in the frame specified by deficits_frame
+    deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
+
     # Optional default issuance shares to validate early (SHORT/NB/TIPS)
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
 
@@ -64,6 +68,12 @@ class MacroConfig:
             for k, m in self.variable_rates_annual.items():
                 vr[k] = {int(yy): float(val) for yy, val in m.items()}
             data["variable_rates_annual"] = vr
+        # Nest deficits fields for readability
+        if self.deficits_frame is not None:
+            deficits_block: Dict[str, object] = {"frame": self.deficits_frame}
+            if self.deficits_annual_pct_gdp is not None:
+                deficits_block["annual_pct_gdp"] = {int(k): float(v) for k, v in self.deficits_annual_pct_gdp.items()}
+            data["deficits"] = deficits_block
         return data
 
 
@@ -192,6 +202,11 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     if frame not in {"FY", "CY"}:
         raise ValueError("deficits.frame must be 'FY' or 'CY'")
 
+    deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
+    if isinstance(deficits.get("annual_pct_gdp"), dict):
+        # Percent values; keep as provided (finite), keyed by year in given frame
+        deficits_annual_pct_gdp = _validate_fy_growth_map(deficits["annual_pct_gdp"], field="deficits.annual_pct_gdp")
+
     # Optional validations
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
     if isinstance(raw.get("issuance_default_shares"), dict):
@@ -216,6 +231,7 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         gdp_anchor_fy=gdp_anchor_fy,
         gdp_anchor_value_usd_millions=gdp_anchor_value,
         deficits_frame=frame,  # type: ignore[arg-type]
+        deficits_annual_pct_gdp=deficits_annual_pct_gdp,
         issuance_default_shares=issuance_default_shares,
         rates_constant=rates_constant,
         gdp_annual_fy_growth_rate=gdp_annual_fy_growth_rate,

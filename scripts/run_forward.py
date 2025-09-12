@@ -21,6 +21,7 @@ from engine.state import DebtState
 from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
+from macro.deficits import build_primary_deficit_series, write_deficits_preview
 from diagnostics.qa import run_qa
 from diagnostics.uat import run_uat
 
@@ -160,27 +161,12 @@ def main() -> None:
     last = stocks.iloc[-1]
     start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
 
-    # Simple deficits: zero for step 9 skeleton
-    deficits = pd.Series(0.0, index=idx)
-
-    # OTHER interest exogenous: set to zero here
-    other = pd.Series(0.0, index=idx)
-
-    engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
-    logger.debug("ENGINE START start=%s end=%s months=%d", idx[0], idx[-1], len(idx))
-    df = engine.run(idx, start_state, deficits, other, trace_out_path=run_dir / "diagnostics" / "monthly_trace.parquet")
-    logger.debug("ENGINE END rows=%d cols=%d", len(df), df.shape[1])
-    print(df.head(3))
-    print(df.tail(3))
-
-    # Step 11: Annualization & % of GDP
-    # Build GDP model using FY growth from config when available; otherwise default to 0 growth
+    # Primary deficits: build from %GDP config (default to 0 if not provided)
+    # Build GDP model first (also used later for annualization)
     years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
     anchor_fy = pd.Timestamp(cfg.anchor_date).year if hasattr(cfg, "anchor_date") else idx[0].year
     if getattr(cfg, "gdp_annual_fy_growth_rate", None):
-        # Config growth provided in percent; convert to decimals
         growth_fy = {int(y): float(v) / 100.0 for y, v in cfg.gdp_annual_fy_growth_rate.items()}
-        # Ensure coverage for needed years by forward/backfilling edges
         min_y, max_y = min(growth_fy), max(growth_fy)
         growth_full = {}
         last = growth_fy.get(min_y, 0.0)
@@ -192,6 +178,22 @@ def main() -> None:
     else:
         growth_fy = {y: 0.0 for y in years_needed if y >= anchor_fy}
     gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
+
+    deficits_series, deficits_preview = build_primary_deficit_series(cfg, gdp_model, idx)
+    deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
+    write_deficits_preview(deficits_preview, deficits_preview_path)
+
+    # OTHER interest exogenous: set to zero here
+    other = pd.Series(0.0, index=idx)
+
+    engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
+    logger.debug("ENGINE START start=%s end=%s months=%d", idx[0], idx[-1], len(idx))
+    df = engine.run(idx, start_state, deficits_series, other, trace_out_path=run_dir / "diagnostics" / "monthly_trace.parquet")
+    logger.debug("ENGINE END rows=%d cols=%d", len(df), df.shape[1])
+    print(df.head(3))
+    print(df.tail(3))
+
+    # Step 11: Annualization & % of GDP (reuse gdp_model above)
 
     # Use interest including OTHER for totals
     monthly_for_annual = df.copy()
