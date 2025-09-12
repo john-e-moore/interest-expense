@@ -32,6 +32,20 @@ class MacroConfig:
     # Frame for deficits and reporting inputs
     deficits_frame: FiscalFrame
 
+    # Optional annual primary deficits as percent of GDP by year (percent, not decimal)
+    # Interpreted in the frame specified by deficits_frame
+    deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
+
+    # Other interest (exogenous add-on to interest), default enabled
+    other_interest_enabled: bool = True
+    other_interest_frame: Optional[FiscalFrame] = None
+    other_interest_annual_pct_gdp: Optional[Dict[int, float]] = None
+    other_interest_annual_usd_mn: Optional[Dict[int, float]] = None
+
+    # Issuance shares transition (default ON)
+    issuance_transition_enabled: bool = True
+    issuance_transition_months: int = 6
+
     # Optional default issuance shares to validate early (SHORT/NB/TIPS)
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
 
@@ -64,6 +78,26 @@ class MacroConfig:
             for k, m in self.variable_rates_annual.items():
                 vr[k] = {int(yy): float(val) for yy, val in m.items()}
             data["variable_rates_annual"] = vr
+        # Nest deficits fields for readability
+        if self.deficits_frame is not None:
+            deficits_block: Dict[str, object] = {"frame": self.deficits_frame}
+            if self.deficits_annual_pct_gdp is not None:
+                deficits_block["annual_pct_gdp"] = {int(k): float(v) for k, v in self.deficits_annual_pct_gdp.items()}
+            data["deficits"] = deficits_block
+        # Nest other_interest for readability
+        other_block: Dict[str, object] = {"enabled": self.other_interest_enabled}
+        if self.other_interest_frame is not None:
+            other_block["frame"] = self.other_interest_frame
+        if self.other_interest_annual_pct_gdp is not None:
+            other_block["annual_pct_gdp"] = {int(k): float(v) for k, v in self.other_interest_annual_pct_gdp.items()}
+        if self.other_interest_annual_usd_mn is not None:
+            other_block["annual_usd_mn"] = {int(k): float(v) for k, v in self.other_interest_annual_usd_mn.items()}
+        data["other_interest"] = other_block
+        # Issuance transition block
+        data["issuance_shares_transition"] = {
+            "enabled": self.issuance_transition_enabled,
+            "months": int(self.issuance_transition_months),
+        }
         return data
 
 
@@ -192,6 +226,11 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     if frame not in {"FY", "CY"}:
         raise ValueError("deficits.frame must be 'FY' or 'CY'")
 
+    deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
+    if isinstance(deficits.get("annual_pct_gdp"), dict):
+        # Percent values; keep as provided (finite), keyed by year in given frame
+        deficits_annual_pct_gdp = _validate_fy_growth_map(deficits["annual_pct_gdp"], field="deficits.annual_pct_gdp")
+
     # Optional validations
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
     if isinstance(raw.get("issuance_default_shares"), dict):
@@ -210,12 +249,52 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     if isinstance(raw.get("variable_rates_annual"), dict):
         variable_rates_annual = _validate_variable_rates_annual(raw["variable_rates_annual"])  # type: ignore[index]
 
+    # Other interest (optional block); default enabled when absent
+    other_interest_enabled: bool = True
+    other_interest_frame: Optional[FiscalFrame] = None
+    other_interest_annual_pct_gdp: Optional[Dict[int, float]] = None
+    other_interest_annual_usd_mn: Optional[Dict[int, float]] = None
+
+    other = raw.get("other_interest")
+    if isinstance(other, dict):
+        if "enabled" in other:
+            other_interest_enabled = bool(other.get("enabled", True))
+        if "frame" in other:
+            fr = str(other.get("frame", "")).upper()
+            if fr in {"FY", "CY"}:
+                other_interest_frame = fr  # type: ignore[assignment]
+        if isinstance(other.get("annual_pct_gdp"), dict):
+            other_interest_annual_pct_gdp = _validate_fy_growth_map(other["annual_pct_gdp"], field="other_interest.annual_pct_gdp")
+        if isinstance(other.get("annual_usd_mn"), dict):
+            # USD millions directly; validate finite via growth map helper reuse
+            other_interest_annual_usd_mn = _validate_fy_growth_map(other["annual_usd_mn"], field="other_interest.annual_usd_mn")
+
+    # Issuance transition (optional); default enabled
+    issuance_transition_enabled = True
+    issuance_transition_months = 6
+    trans = raw.get("issuance_shares_transition")
+    if isinstance(trans, dict):
+        if "enabled" in trans:
+            issuance_transition_enabled = bool(trans.get("enabled", True))
+        if "months" in trans:
+            try:
+                issuance_transition_months = max(1, int(trans.get("months", 6)))
+            except Exception:  # noqa: BLE001
+                issuance_transition_months = 6
+
     return MacroConfig(
         anchor_date=anchor_date,
         horizon_months=horizon_months,
         gdp_anchor_fy=gdp_anchor_fy,
         gdp_anchor_value_usd_millions=gdp_anchor_value,
         deficits_frame=frame,  # type: ignore[arg-type]
+        deficits_annual_pct_gdp=deficits_annual_pct_gdp,
+        other_interest_enabled=other_interest_enabled,
+        other_interest_frame=other_interest_frame,  # type: ignore[arg-type]
+        other_interest_annual_pct_gdp=other_interest_annual_pct_gdp,
+        other_interest_annual_usd_mn=other_interest_annual_usd_mn,
+        issuance_transition_enabled=issuance_transition_enabled,
+        issuance_transition_months=issuance_transition_months,
         issuance_default_shares=issuance_default_shares,
         rates_constant=rates_constant,
         gdp_annual_fy_growth_rate=gdp_annual_fy_growth_rate,

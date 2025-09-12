@@ -99,6 +99,59 @@ class PiecewiseSharesPolicy:
         return df
 
 
+@dataclass
+class TransitionalSharesPolicy:
+    """
+    Linearly interpolate issuance shares from starting mix to target over N months.
+
+    - start_shares: tuple(short, nb, tips) at anchor month
+    - target_shares: tuple(short, nb, tips)
+    - months: number of months to interpolate (>=1)
+    """
+
+    start_short: float
+    start_nb: float
+    start_tips: float
+    target_short: float
+    target_nb: float
+    target_tips: float
+    months: int = 6
+
+    def __post_init__(self) -> None:
+        _validate_shares_dict({"short": self.start_short, "nb": self.start_nb, "tips": self.start_tips})
+        _validate_shares_dict({"short": self.target_short, "nb": self.target_nb, "tips": self.target_tips})
+        if self.months < 1:
+            raise ValueError("months must be >= 1")
+
+    def get(self, index: Iterable[pd.Timestamp]) -> pd.DataFrame:
+        idx = pd.to_datetime(pd.DatetimeIndex(index)).to_period("M").to_timestamp()
+
+        def interp(m: int, s: float, t: float) -> float:
+            # m=0..months-1 ramp; m>=months -> target
+            if m >= self.months:
+                return t
+            alpha = m / float(self.months)
+            return (1.0 - alpha) * s + alpha * t
+
+        rows = []
+        for i, _d in enumerate(idx):
+            ss = interp(i, self.start_short, self.target_short)
+            sn = interp(i, self.start_nb, self.target_nb)
+            st = interp(i, self.start_tips, self.target_tips)
+            total = ss + sn + st
+            if total <= 0:
+                ss, sn, st = 0.2, 0.7, 0.1
+                total = 1.0
+            ss /= total
+            sn /= total
+            st /= total
+            rows.append((ss, sn, st))
+
+        df = pd.DataFrame(rows, columns=["short", "nb", "tips"], index=idx)
+        df.index.name = "date"
+        return df
+
+
 def write_issuance_preview(provider, index: Iterable[pd.Timestamp], out_path: str = "output/diagnostics/issuance_preview.csv") -> Path:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -16,12 +16,21 @@ from macro.config import load_macro_yaml, write_config_echo
 from core.run_dir import create_run_directory
 from core.logging_utils import setup_run_logger, get_git_sha, log_run_start, log_run_end
 from macro.rates import build_month_index, ConstantRatesProvider, FiscalYearVariableRatesProvider, write_rates_preview
-from macro.issuance import FixedSharesPolicy, write_issuance_preview
+from macro.issuance import FixedSharesPolicy, TransitionalSharesPolicy, write_issuance_preview
 from engine.state import DebtState
 from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
-from diagnostics.qa import run_qa
+from macro.deficits import build_primary_deficit_series, write_deficits_preview
+from macro.other_interest import build_other_interest_series, write_other_interest_preview
+from diagnostics.qa import (
+    run_qa,
+    write_hist_forward_breakdown,
+    write_hist_forward_breakdown_monthly,
+    write_historical_shares,
+    write_historical_effective_rates,
+    _read_monthly_trace,
+)
 from diagnostics.uat import run_uat
 
 
@@ -78,7 +87,7 @@ def main() -> None:
     write_rates_preview(rp, idx, out_path=str(rates_preview_path))
     logger.debug("RATES PREVIEW path=%s months=%d", str(rates_preview_path), len(idx))
 
-    # Issuance shares: use fitted if present; else config defaults
+    # Issuance target shares: use fitted if present; else config defaults (build provider later)
     params_path = run_dir / "parameters.json"
     if params_path.exists():
         import json
@@ -86,15 +95,14 @@ def main() -> None:
         with params_path.open("r", encoding="utf-8") as f:
             params = json.load(f)
         s = params.get("issuance_shares", {})
-        issuance = FixedSharesPolicy(short=float(s.get("short", 0.2)), nb=float(s.get("nb", 0.7)), tips=float(s.get("tips", 0.1)))
+        target_short = float(s.get("short", 0.2))
+        target_nb = float(s.get("nb", 0.7))
+        target_tips = float(s.get("tips", 0.1))
     else:
         if cfg.issuance_default_shares is None:
             raise SystemExit("No parameters.json and no issuance_default_shares in macro.yaml")
-        short, nb, tips = cfg.issuance_default_shares
-        issuance = FixedSharesPolicy(short=short, nb=nb, tips=tips)
-    issuance_preview_path = run_dir / "diagnostics" / "issuance_preview.csv"
-    write_issuance_preview(issuance, idx, out_path=str(issuance_preview_path))
-    logger.debug("ISSUANCE PREVIEW path=%s", str(issuance_preview_path))
+        target_short, target_nb, target_tips = cfg.issuance_default_shares
+    # Build shares provider after stocks are loaded (below)
 
     # Start state from latest stocks (scaled) month. If scaled stocks are missing, build them
     # from MSPD outstanding and scale to FY interest totals using config rates.
@@ -160,27 +168,37 @@ def main() -> None:
     last = stocks.iloc[-1]
     start_state = DebtState(stock_short=float(last["stock_short"]), stock_nb=float(last["stock_nb"]), stock_tips=float(last["stock_tips"]))
 
-    # Simple deficits: zero for step 9 skeleton
-    deficits = pd.Series(0.0, index=idx)
+    # Build shares provider: transitional by default using start_state composition
+    total_start = float(last["stock_short"]) + float(last["stock_nb"]) + float(last["stock_tips"]) 
+    if total_start <= 0:
+        start_short, start_nb, start_tips = 0.2, 0.7, 0.1
+    else:
+        start_short = float(last["stock_short"]) / total_start
+        start_nb = float(last["stock_nb"]) / total_start
+        start_tips = float(last["stock_tips"]) / total_start
 
-    # OTHER interest exogenous: set to zero here
-    other = pd.Series(0.0, index=idx)
+    if getattr(cfg, "issuance_transition_enabled", True):
+        issuance = TransitionalSharesPolicy(
+            start_short=start_short,
+            start_nb=start_nb,
+            start_tips=start_tips,
+            target_short=target_short,
+            target_nb=target_nb,
+            target_tips=target_tips,
+            months=int(getattr(cfg, "issuance_transition_months", 6)),
+        )
+    else:
+        issuance = FixedSharesPolicy(short=target_short, nb=target_nb, tips=target_tips)
+    issuance_preview_path = run_dir / "diagnostics" / "issuance_preview.csv"
+    write_issuance_preview(issuance, idx, out_path=str(issuance_preview_path))
+    logger.debug("ISSUANCE PREVIEW path=%s", str(issuance_preview_path))
 
-    engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
-    logger.debug("ENGINE START start=%s end=%s months=%d", idx[0], idx[-1], len(idx))
-    df = engine.run(idx, start_state, deficits, other, trace_out_path=run_dir / "diagnostics" / "monthly_trace.parquet")
-    logger.debug("ENGINE END rows=%d cols=%d", len(df), df.shape[1])
-    print(df.head(3))
-    print(df.tail(3))
-
-    # Step 11: Annualization & % of GDP
-    # Build GDP model using FY growth from config when available; otherwise default to 0 growth
+    # Primary deficits: build from %GDP config (default to 0 if not provided)
+    # Build GDP model first (also used later for annualization)
     years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
     anchor_fy = pd.Timestamp(cfg.anchor_date).year if hasattr(cfg, "anchor_date") else idx[0].year
     if getattr(cfg, "gdp_annual_fy_growth_rate", None):
-        # Config growth provided in percent; convert to decimals
         growth_fy = {int(y): float(v) / 100.0 for y, v in cfg.gdp_annual_fy_growth_rate.items()}
-        # Ensure coverage for needed years by forward/backfilling edges
         min_y, max_y = min(growth_fy), max(growth_fy)
         growth_full = {}
         last = growth_fy.get(min_y, 0.0)
@@ -192,6 +210,28 @@ def main() -> None:
     else:
         growth_fy = {y: 0.0 for y in years_needed if y >= anchor_fy}
     gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
+
+    deficits_series, deficits_preview = build_primary_deficit_series(cfg, gdp_model, idx)
+    deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
+    write_deficits_preview(deficits_preview, deficits_preview_path)
+
+    # OTHER interest exogenous: build from config (default enabled)
+    if getattr(cfg, "other_interest_enabled", True):
+        other_series, other_preview = build_other_interest_series(cfg, gdp_model, idx)
+        other_preview_path = run_dir / "diagnostics" / "other_interest_preview.csv"
+        write_other_interest_preview(other_preview, other_preview_path)
+        other = other_series
+    else:
+        other = pd.Series(0.0, index=idx)
+
+    engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
+    logger.debug("ENGINE START start=%s end=%s months=%d", idx[0], idx[-1], len(idx))
+    df = engine.run(idx, start_state, deficits_series, other, trace_out_path=run_dir / "diagnostics" / "monthly_trace.parquet")
+    logger.debug("ENGINE END rows=%d cols=%d", len(df), df.shape[1])
+    print(df.head(3))
+    print(df.tail(3))
+
+    # Step 11: Annualization & % of GDP (reuse gdp_model above)
 
     # Use interest including OTHER for totals
     monthly_for_annual = df.copy()
@@ -220,6 +260,63 @@ def main() -> None:
         )
         print("Wrote QA:", p1, p2, p3)
         logger.info("QA WRITE monthly_interest=%s effective_rate=%s bridge=%s", str(p1), str(p2), str(p3))
+
+        # Write historical vs forward breakdown spreadsheets (FY and CY)
+        monthly = _read_monthly_trace(run_dir / "diagnostics" / "monthly_trace.parquet")
+        # FY (annual)
+        write_hist_forward_breakdown(
+            monthly,
+            hist_path=run_dir / "diagnostics" / "interest_fy_totals.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="FY",
+            out_path=run_dir / "fiscal_year" / "spreadsheets" / "annual_breakdown.csv",
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
+        )
+        # CY (annual)
+        write_hist_forward_breakdown(
+            monthly,
+            hist_path=run_dir / "diagnostics" / "interest_cy_totals.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="CY",
+            out_path=run_dir / "calendar_year" / "spreadsheets" / "annual_breakdown.csv",
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
+        )
+
+        # Monthly breakdowns
+        # FY (monthly): use diagnostics interest_monthly_by_category.csv
+        write_hist_forward_breakdown_monthly(
+            monthly,
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="FY",
+            out_path=run_dir / "fiscal_year" / "spreadsheets" / "monthly_breakdown.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
+        )
+        # CY (monthly): same historical monthly source, but CY GDP mapping
+        write_hist_forward_breakdown_monthly(
+            monthly,
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="CY",
+            out_path=run_dir / "calendar_year" / "spreadsheets" / "monthly_breakdown.csv",
+            stocks_path=run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
+        )
+
+        # Historical convenience diagnostics (shares and effective rates)
+        shares_path = run_dir / "diagnostics" / "historical_shares.csv"
+        write_historical_shares(run_dir / "diagnostics" / "interest_monthly_by_category.csv", shares_path)
+        rates_eff_path = run_dir / "diagnostics" / "historical_effective_rates.csv"
+        write_historical_effective_rates(
+            run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            run_dir / "diagnostics" / "outstanding_by_bucket_scaled.csv",
+            rates_eff_path,
+        )
 
     # Optional UAT checklist
     if args.uat:
