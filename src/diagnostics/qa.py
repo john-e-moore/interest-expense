@@ -429,6 +429,93 @@ def write_hist_forward_breakdown(
     return p
 
 
+def write_hist_forward_breakdown_monthly(
+    monthly_df: pd.DataFrame,
+    hist_monthly_path: str | Path,
+    *,
+    gdp_model: GDPModel,
+    anchor_date: pd.Timestamp,
+    frame: str,
+    out_path: str | Path,
+) -> Path:
+    """
+    Monthly breakdown with columns:
+      date, gdp, interest_historical, interest_forward, interest_total,
+      historical_pct_gdp, forward_pct_gdp, total_pct_gdp
+
+    Historical months are strictly before the anchor month; months at/after
+    the anchor month are treated as forward.
+    gdp is the annual level corresponding to the frame (FY or CY) of the row's date.
+    """
+    if frame not in {"FY", "CY"}:
+        raise ValueError("frame must be 'FY' or 'CY'")
+    # Normalize monthly_df index
+    df = monthly_df.copy()
+    df.index = pd.to_datetime(pd.DatetimeIndex(df.index)).to_period("M").to_timestamp()
+    # Include other_interest if present
+    total_col = "interest_total"
+    if "other_interest" in df.columns:
+        df["_total_interest"] = df["interest_total"].astype(float) + df["other_interest"].astype(float)
+        total_col = "_total_interest"
+
+    # Historical monthly totals (diagnostics file)
+    hm = pd.read_csv(hist_monthly_path)
+    # Expect 'Record Date' monthly and 'Interest Expense'
+    if "Record Date" not in hm.columns or "Interest Expense" not in hm.columns:
+        raise ValueError("historical monthly file missing expected columns")
+    hm["Record Date"] = pd.to_datetime(hm["Record Date"]).dt.to_period("M").dt.to_timestamp()
+    hist_m = hm.groupby("Record Date", as_index=True)["Interest Expense"].sum().astype(float)
+
+    # Anchor month boundary
+    anchor = pd.Timestamp(anchor_date).to_period("M").to_timestamp()
+
+    # Build calendar of months to cover: union of hist (<anchor) and forward (>=anchor)
+    months_hist = hist_m.index[hist_m.index < anchor]
+    months_fwd = df.index[df.index >= anchor]
+    all_months = pd.Index(sorted(set(months_hist.tolist()) | set(months_fwd.tolist())))
+
+    # Compute per-month values
+    hist_vals = pd.Series(0.0, index=all_months)
+    fwd_vals = pd.Series(0.0, index=all_months)
+    # Historical strictly before anchor
+    hist_vals.loc[months_hist] = hist_m.reindex(months_hist).fillna(0.0).astype(float).values
+    # Forward at/after anchor from projection
+    fwd_vals.loc[months_fwd] = df.loc[months_fwd, total_col].astype(float).values
+
+    # GDP mapping per frame
+    def _safe_gdp_fy(y: int) -> float:
+        try:
+            return float(gdp_model.gdp_fy(int(y)))
+        except Exception:  # noqa: BLE001
+            return float("nan")
+    def _safe_gdp_cy(y: int) -> float:
+        try:
+            return float(gdp_model.gdp_cy(int(y)))
+        except Exception:  # noqa: BLE001
+            return float("nan")
+    if frame == "FY":
+        gdp_vals = pd.Series({d: _safe_gdp_fy(int(fiscal_year(d))) for d in all_months})
+    else:
+        gdp_vals = pd.Series({d: _safe_gdp_cy(int(d.year)) for d in all_months})
+
+    out = pd.DataFrame(
+        {
+            "date": all_months,
+            "gdp": gdp_vals.values,
+            "interest_historical": hist_vals.values,
+            "interest_forward": fwd_vals.values,
+        }
+    )
+    out["interest_total"] = out[["interest_historical", "interest_forward"]].sum(axis=1)
+    out["historical_pct_gdp"] = out["interest_historical"] / out["gdp"]
+    out["forward_pct_gdp"] = out["interest_forward"] / out["gdp"]
+    out["total_pct_gdp"] = out["interest_total"] / out["gdp"]
+    p = Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(p, index=False)
+    return p
+
+
 def run_qa(
     monthly_trace_path: str | Path = "output/diagnostics/monthly_trace.parquet",
     annual_cy_path: str | Path = "output/calendar_year/spreadsheets/annual.csv",

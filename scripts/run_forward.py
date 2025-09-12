@@ -23,7 +23,7 @@ from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from macro.deficits import build_primary_deficit_series, write_deficits_preview
 from macro.other_interest import build_other_interest_series, write_other_interest_preview
-from diagnostics.qa import run_qa, write_hist_forward_breakdown, _read_monthly_trace
+from diagnostics.qa import run_qa, write_hist_forward_breakdown, write_hist_forward_breakdown_monthly, _read_monthly_trace
 from diagnostics.uat import run_uat
 
 
@@ -256,7 +256,7 @@ def main() -> None:
 
         # Write historical vs forward breakdown spreadsheets (FY and CY)
         monthly = _read_monthly_trace(run_dir / "diagnostics" / "monthly_trace.parquet")
-        # FY
+        # FY (annual)
         write_hist_forward_breakdown(
             monthly,
             hist_path=run_dir / "diagnostics" / "interest_fy_totals.csv",
@@ -265,7 +265,7 @@ def main() -> None:
             frame="FY",
             out_path=run_dir / "fiscal_year" / "spreadsheets" / "annual_breakdown.csv",
         )
-        # CY
+        # CY (annual)
         write_hist_forward_breakdown(
             monthly,
             hist_path=run_dir / "diagnostics" / "interest_cy_totals.csv",
@@ -273,6 +273,26 @@ def main() -> None:
             anchor_date=pd.Timestamp(cfg.anchor_date),
             frame="CY",
             out_path=run_dir / "calendar_year" / "spreadsheets" / "annual_breakdown.csv",
+        )
+
+        # Monthly breakdowns
+        # FY (monthly): use diagnostics interest_monthly_by_category.csv
+        write_hist_forward_breakdown_monthly(
+            monthly,
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="FY",
+            out_path=run_dir / "fiscal_year" / "spreadsheets" / "monthly_breakdown.csv",
+        )
+        # CY (monthly): same historical monthly source, but CY GDP mapping
+        write_hist_forward_breakdown_monthly(
+            monthly,
+            hist_monthly_path=run_dir / "diagnostics" / "interest_monthly_by_category.csv",
+            gdp_model=gdp_model,
+            anchor_date=pd.Timestamp(cfg.anchor_date),
+            frame="CY",
+            out_path=run_dir / "calendar_year" / "spreadsheets" / "monthly_breakdown.csv",
         )
 
     # Optional UAT checklist
