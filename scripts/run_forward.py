@@ -22,6 +22,7 @@ from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from macro.deficits import build_primary_deficit_series, write_deficits_preview
+from macro.other_interest import build_other_interest_series, write_other_interest_preview
 from diagnostics.qa import run_qa
 from diagnostics.uat import run_uat
 
@@ -183,8 +184,14 @@ def main() -> None:
     deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
     write_deficits_preview(deficits_preview, deficits_preview_path)
 
-    # OTHER interest exogenous: set to zero here
-    other = pd.Series(0.0, index=idx)
+    # OTHER interest exogenous: build from config (default enabled)
+    if getattr(cfg, "other_interest_enabled", True):
+        other_series, other_preview = build_other_interest_series(cfg, gdp_model, idx)
+        other_preview_path = run_dir / "diagnostics" / "other_interest_preview.csv"
+        write_other_interest_preview(other_preview, other_preview_path)
+        other = other_series
+    else:
+        other = pd.Series(0.0, index=idx)
 
     engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
     logger.debug("ENGINE START start=%s end=%s months=%d", idx[0], idx[-1], len(idx))

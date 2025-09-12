@@ -80,6 +80,42 @@ rates: # Current market rates, not effective rate
     nb: 0.04
     tips: 0.02
 
+other_interest:
+  enabled: true
+  frame: FY
+  # Provide a small baseline as % of GDP that slowly declines
+  annual_pct_gdp:
+    2025: 0.20
+    2026: 0.19
+    2027: 0.19
+    2028: 0.18
+    2029: 0.18
+    2030: 0.17
+    2031: 0.17
+    2032: 0.16
+    2033: 0.16
+    2034: 0.15
+    2035: 0.15
+    2036: 0.15
+    2037: 0.14
+    2038: 0.14
+    2039: 0.14
+    2040: 0.13
+    2041: 0.13
+    2042: 0.13
+    2043: 0.12
+    2044: 0.12
+    2045: 0.12
+    2046: 0.11
+    2047: 0.11
+    2048: 0.11
+    2049: 0.10
+    2050: 0.10
+    2051: 0.10
+    2052: 0.10
+    2053: 0.09
+    2054: 0.09
+    2055: 0.09
 variable_rates_annual:
   short:
     2025: 0.03

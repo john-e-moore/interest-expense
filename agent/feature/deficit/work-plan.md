@@ -34,9 +34,9 @@
    - CY mapping: analogous checks.
    - Engine budget identity: with non-zero deficits, monthly `GFN = deficit + interest + other + redemptions` holds (extend existing identity test).
 
-### Phase 2 — Optional Other Interest Forecast (default OFF)
+### Phase 2 — Other Interest Forecast (default ON)
 1) Config parsing (optional block)
-   - Accept either `%GDP` or `annual_usd_mn` under `other_interest:` with a `frame` and `enabled: false` by default.
+   - Accept either `%GDP` or `annual_usd_mn` under `other_interest:` with a `frame` and `enabled: true` by default. Allow `enabled: false` to turn it off explicitly.
 2) Builder
    - Reuse logic pattern from deficits to build monthly USD series; write `other_interest_preview.csv`.
 3) Wiring

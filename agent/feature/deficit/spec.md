@@ -55,14 +55,14 @@ Notes:
 - Include `deficit_month_usd_mn` in the `monthly_trace` CSV (optional but useful), or keep it implicit via GFN and add it to the preview only. Minimum requirement is the preview file.
 - QA visuals (optional follow‑up): add an overlay of `GFN` components by FY for the anchor and next year.
 
-### Optional Enhancements (toggles; default OFF)
+### Optional Enhancements (toggles; default ON for Other Interest)
 
-1) Other Interest Forecast (exogenous)
+1) Other Interest Forecast (exogenous) — DEFAULT ON
 - Purpose: Align forward coverage with history by adding a separate exogenous `other_interest` stream (e.g., guarantee fees, non-marketable), preventing a downward break at the anchor.
 - Config (either mode):
 ```yaml
 other_interest:
-  enabled: false          # default false; when true, build and pass monthly series
+  enabled: true           # default true; build and pass monthly series unless explicitly disabled
   frame: FY               # or CY
   annual_pct_gdp:         # percent, not decimal (optional if using absolute)
     2025: 0.20
