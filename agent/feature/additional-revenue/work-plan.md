@@ -79,4 +79,24 @@
 - Phase 1: 4–6 hours (parser, builder, wiring, tests, diagnostics).
 - Phase 2: 2–3 hours (outputs and docs).
 
+### Phase 3 — Feature flag: additional_revenue.enabled (default OFF)
+1) Config parsing
+   - Extend `deficits.additional_revenue` with `enabled: false` (default when absent).
+   - In `src/macro/config.py`, add `additional_revenue_enabled: bool = False` to `MacroConfig` and parse the flag with safe coercion to bool.
+2) Wiring behavior
+   - Only build and subtract the additional revenue series when `enabled is True`.
+   - If mappings are present but `enabled` is false (or missing), log a DEBUG note and ignore the series (no subtraction, no preview CSV).
+   - Echo `enabled` in `config_echo.json` for traceability.
+3) Diagnostics & outputs
+   - When disabled, do not write `additional_revenue_preview.csv` and do not add the `additional_revenue` column into annual CSVs.
+   - When enabled, behavior remains as in Phase 1–2.
+4) Tests
+   - Parsing defaults: when `enabled` missing, flag is false.
+   - Disabled path: run produces no `additional_revenue_preview.csv`; annual CSVs lack the column; engine uses unadjusted primary deficit.
+   - Enabled path: parity with existing tests; column appears; adjusted deficit < base for positive revenue.
+5) Docs
+   - Update `README.md` snippets to include `enabled: true` in examples, and call out the default is OFF.
+
+Estimated Effort: 1–2 hours.
+
 

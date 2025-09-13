@@ -41,6 +41,7 @@ class MacroConfig:
     additional_revenue_mode: Optional[Literal["pct_gdp", "level"]] = None
     additional_revenue_annual_pct_gdp: Optional[Dict[int, float]] = None
     additional_revenue_annual_level_usd_millions: Optional[Dict[int, float]] = None
+    additional_revenue_enabled: bool = False
 
     # Other interest (exogenous add-on to interest), default enabled
     other_interest_enabled: bool = True
@@ -90,8 +91,10 @@ class MacroConfig:
             if self.deficits_annual_pct_gdp is not None:
                 deficits_block["annual_pct_gdp"] = {int(k): float(v) for k, v in self.deficits_annual_pct_gdp.items()}
             # Nest additional_revenue if configured
-            if self.additional_revenue_mode is not None:
-                add_rev: Dict[str, object] = {"mode": self.additional_revenue_mode}
+            if self.additional_revenue_mode is not None or self.additional_revenue_enabled:
+                add_rev: Dict[str, object] = {"enabled": bool(self.additional_revenue_enabled)}
+                if self.additional_revenue_mode is not None:
+                    add_rev["mode"] = self.additional_revenue_mode
                 if self.additional_revenue_mode == "pct_gdp" and self.additional_revenue_annual_pct_gdp is not None:
                     add_rev["annual_pct_gdp"] = {int(k): float(v) for k, v in self.additional_revenue_annual_pct_gdp.items()}
                 if self.additional_revenue_mode == "level" and self.additional_revenue_annual_level_usd_millions is not None:
@@ -249,8 +252,14 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     additional_revenue_mode: Optional[Literal["pct_gdp", "level"]] = None
     additional_revenue_annual_pct_gdp: Optional[Dict[int, float]] = None
     additional_revenue_annual_level_usd_millions: Optional[Dict[int, float]] = None
+    additional_revenue_enabled: bool = False
     add_rev = deficits.get("additional_revenue") if isinstance(deficits, dict) else None
     if isinstance(add_rev, dict):
+        if "enabled" in add_rev:
+            try:
+                additional_revenue_enabled = bool(add_rev.get("enabled", False))
+            except Exception:  # noqa: BLE001
+                additional_revenue_enabled = False
         mode_str = str(add_rev.get("mode", "")).strip().lower()
         if mode_str in {"pct_gdp", "level"}:
             additional_revenue_mode = mode_str  # type: ignore[assignment]
@@ -262,14 +271,15 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         if isinstance(add_rev.get("annual_level_usd_millions"), dict):
             additional_revenue_annual_level_usd_millions = _validate_fy_growth_map(add_rev["annual_level_usd_millions"], field="deficits.additional_revenue.annual_level_usd_millions")
         # Exclusivity checks
-        if additional_revenue_mode == "pct_gdp" and additional_revenue_annual_pct_gdp is None:
-            raise ValueError("additional_revenue.mode is pct_gdp but annual_pct_gdp missing")
-        if additional_revenue_mode == "level" and additional_revenue_annual_level_usd_millions is None:
-            raise ValueError("additional_revenue.mode is level but annual_level_usd_millions missing")
-        if additional_revenue_mode is None and (additional_revenue_annual_pct_gdp or additional_revenue_annual_level_usd_millions):
-            raise ValueError("additional_revenue provided without a valid mode")
-        if additional_revenue_annual_pct_gdp is not None and additional_revenue_annual_level_usd_millions is not None:
-            raise ValueError("Provide only one of annual_pct_gdp or annual_level_usd_millions for additional_revenue")
+        if additional_revenue_enabled:
+            if additional_revenue_mode == "pct_gdp" and additional_revenue_annual_pct_gdp is None:
+                raise ValueError("additional_revenue.mode is pct_gdp but annual_pct_gdp missing")
+            if additional_revenue_mode == "level" and additional_revenue_annual_level_usd_millions is None:
+                raise ValueError("additional_revenue.mode is level but annual_level_usd_millions missing")
+            if additional_revenue_mode is None and (additional_revenue_annual_pct_gdp or additional_revenue_annual_level_usd_millions):
+                raise ValueError("additional_revenue provided without a valid mode")
+            if additional_revenue_annual_pct_gdp is not None and additional_revenue_annual_level_usd_millions is not None:
+                raise ValueError("Provide only one of annual_pct_gdp or annual_level_usd_millions for additional_revenue")
 
     # Optional validations
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
@@ -332,6 +342,7 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         additional_revenue_mode=additional_revenue_mode,
         additional_revenue_annual_pct_gdp=additional_revenue_annual_pct_gdp,
         additional_revenue_annual_level_usd_millions=additional_revenue_annual_level_usd_millions,
+        additional_revenue_enabled=additional_revenue_enabled,
         other_interest_enabled=other_interest_enabled,
         other_interest_frame=other_interest_frame,  # type: ignore[arg-type]
         other_interest_annual_pct_gdp=other_interest_annual_pct_gdp,

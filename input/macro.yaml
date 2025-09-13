@@ -70,6 +70,7 @@ deficits: # Primary deficit
     2054: 1.89
     2055: 1.90
   additional_revenue:
+    enabled: false
     mode: level
     annual_level_usd_millions:
       2025: 300000

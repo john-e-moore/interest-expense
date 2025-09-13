@@ -216,9 +216,9 @@ def main() -> None:
     deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
     write_deficits_preview(deficits_preview, deficits_preview_path)
 
-    # Additional revenue (optional): build and subtract from primary deficit
+    # Additional revenue (optional, gated by enabled flag): build and subtract from primary deficit
     additional_series = None
-    if getattr(cfg, "additional_revenue_mode", None) is not None:
+    if bool(getattr(cfg, "additional_revenue_enabled", False)) and getattr(cfg, "additional_revenue_mode", None) is not None:
         add_series, add_preview = build_additional_revenue_series(cfg, gdp_model, idx)
         additional_series = add_series
         add_preview_path = run_dir / "diagnostics" / "additional_revenue_preview.csv"
