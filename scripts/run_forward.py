@@ -258,8 +258,8 @@ def main() -> None:
 
     # Step 11: Annualization & % of GDP (reuse gdp_model above)
 
-    # Use interest including OTHER for totals
-    monthly_for_annual = df.copy()
+    # Use interest including OTHER for totals; include additional_revenue if present
+    monthly_for_annual = df_enriched.copy() if 'df_enriched' in locals() else df.copy()
     monthly_for_annual = monthly_for_annual.assign(interest_total=monthly_for_annual["interest_total"] + monthly_for_annual.get("other_interest", 0.0))
     cy, fy = annualize(monthly_for_annual, gdp_model)
     p_cy, p_fy = write_annual_csvs(cy, fy, base_dir=str(run_dir))
