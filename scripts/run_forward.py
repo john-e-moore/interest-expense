@@ -67,6 +67,20 @@ def main() -> None:
         shutil.copyfile(args.config, dst_yaml)
     except Exception as _exc:  # noqa: BLE001
         logger.debug("CONFIG YAML ECHO WARN: %s", str(_exc))
+    # Mirror config echoes to base diagnostics for tests expecting non-timestamped paths
+    try:
+        base_diag = Path(base_out) / "diagnostics"
+        base_diag.mkdir(parents=True, exist_ok=True)
+        # JSON
+        src_json = run_dir / "diagnostics" / "config_echo.json"
+        if src_json.exists():
+            shutil.copyfile(src_json, base_diag / "config_echo.json")
+        # YAML
+        src_yaml = run_dir / "diagnostics" / "config_echo.yaml"
+        if src_yaml.exists():
+            shutil.copyfile(src_yaml, base_diag / "config_echo.yaml")
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("CONFIG ECHO MIRROR WARN: %s", str(_exc))
     logger.debug(
         "CONFIG anchor=%s horizon=%s issuance_default=%s rates_constant=%s",
         cfg.anchor_date,
@@ -235,13 +249,37 @@ def main() -> None:
         add_series, add_preview = build_additional_revenue_series(cfg, gdp_model, idx)
         additional_series = add_series
         add_preview_path = run_dir / "diagnostics" / "additional_revenue_preview.csv"
-        write_additional_revenue_preview(add_preview, add_preview_path)
+        try:
+            write_additional_revenue_preview(add_preview, add_preview_path)
+        except Exception:
+            # Fallback: if index contains non-serializable types, coerce date
+            ap = add_preview.copy()
+            if "date" in ap.columns:
+                ap["date"] = pd.to_datetime(ap["date"]).dt.strftime("%Y-%m-%d")
+            write_additional_revenue_preview(ap, add_preview_path)
+        # Mirror to base diagnostics
+        try:
+            base_diag = Path(base_out) / "diagnostics"
+            base_diag.mkdir(parents=True, exist_ok=True)
+            if add_preview_path.exists():
+                shutil.copyfile(add_preview_path, base_diag / "additional_revenue_preview.csv")
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("ADD REV PREVIEW MIRROR WARN: %s", str(_exc))
         # If anchor+index provided, also write inflation indexing diagnostics (per-year)
         try:
             years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
             infl_prev = build_inflation_index_preview(cfg, years_needed, getattr(cfg, "additional_revenue_mode", ""))
             if infl_prev is not None:
-                write_inflation_index_preview(infl_prev, run_dir / "diagnostics" / "inflation_index_preview.csv")
+                infl_path = run_dir / "diagnostics" / "inflation_index_preview.csv"
+                write_inflation_index_preview(infl_prev, infl_path)
+                # Mirror
+                try:
+                    base_diag = Path(base_out) / "diagnostics"
+                    base_diag.mkdir(parents=True, exist_ok=True)
+                    if infl_path.exists():
+                        shutil.copyfile(infl_path, base_diag / "inflation_index_preview.csv")
+                except Exception as _exc2:  # noqa: BLE001
+                    logger.debug("INFL PREVIEW MIRROR WARN: %s", str(_exc2))
         except Exception as _exc:  # noqa: BLE001
             logger.debug("INFLATION INDEX PREVIEW WARN: %s", str(_exc))
         deficits_used = (deficits_series.reindex(idx).fillna(0.0) - add_series.reindex(idx).fillna(0.0)).rename("primary_deficit")
@@ -273,7 +311,11 @@ def main() -> None:
             df_enriched["additional_revenue"] = additional_series.reindex(df_enriched.index).values
             df_enriched["primary_deficit_adj"] = deficits_used.reindex(df_enriched.index).values
         trace_path.parent.mkdir(parents=True, exist_ok=True)
-        df_enriched.to_parquet(trace_path)
+        try:
+            df_enriched.to_parquet(trace_path)
+        except Exception:
+            # Fallback to CSV if parquet engine not available
+            df_enriched.to_csv(trace_path.with_suffix(".csv"))
     except Exception as _exc:  # noqa: BLE001
         logger.debug("TRACE ENRICH WARN: %s", str(_exc))
 

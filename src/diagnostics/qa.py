@@ -150,10 +150,10 @@ def _compose_hist_vs_forward_series(
 
     # Determine anchor month start
     anchor = pd.Timestamp(anchor_date).to_period("M").to_timestamp()
-    # Forward remainder: only months at/after anchor
-    fwd_remainder = df.loc[df.index >= anchor].groupby("Y", as_index=True)[total_col].sum()
+    # Forward totals per year based on full-year monthly coverage from df
+    totals_by_year = df.groupby("Y", as_index=True)[total_col].sum()
 
-    # Historical totals (up to anchor date) – assume provided file is YTD for anchor year
+    # Historical totals (full-year for years < anchor; YTD for anchor year)
     if year_col not in hist_df.columns or "Interest Expense" not in hist_df.columns:
         raise ValueError("historical totals missing expected columns")
     hist_tbl = (
@@ -166,8 +166,8 @@ def _compose_hist_vs_forward_series(
 
     anchor_year = int(anchor.year if frame == "CY" else fiscal_year(anchor))
 
-    # Build aligned year index covering both
-    years = sorted(set(hist_tbl.index.tolist()) | set(fwd_remainder.index.tolist()))
+    # Build aligned year index covering historical table and monthly data
+    years = sorted(set(hist_tbl.index.tolist()) | set(df["Y"].unique().tolist()))
     # Historical part (T4b): years < anchor_year use full historical; anchor_year excluded
     hist_series = pd.Series(index=years, dtype=float)
     for y in years:
@@ -179,15 +179,16 @@ def _compose_hist_vs_forward_series(
         else:
             hist_series.loc[y] = float("nan")
 
-    # Forward part (T4b): anchor year = historical YTD + forward remainder; years after = forward totals
+    # Forward part (T4b): anchor year = monthly full-year + historical YTD; years after = monthly full-year
     fwd_series = pd.Series(index=years, dtype=float)
     for y in years:
         if y < anchor_year:
             fwd_series.loc[y] = float("nan")
         elif y == anchor_year:
-            fwd_series.loc[y] = float(fwd_remainder.get(y, 0.0)) + float(hist_tbl.get(y, 0.0))
+            monthly_full = float(totals_by_year.get(y, 0.0))
+            fwd_series.loc[y] = monthly_full + float(hist_tbl.get(y, 0.0))
         else:
-            fwd_series.loc[y] = float(fwd_remainder.get(y, float("nan")))
+            fwd_series.loc[y] = float(totals_by_year.get(y, float("nan")))
 
     return hist_series, fwd_series, anchor_year
 
