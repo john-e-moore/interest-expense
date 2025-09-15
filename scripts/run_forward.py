@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+import shutil
 
 import pandas as pd
 
@@ -59,6 +60,13 @@ def main() -> None:
     logger = setup_run_logger(run_dir / "run_forward.log", debug=args.debug)
     log_run_start(logger, run_dir=run_dir, config_path=args.config, git_sha=get_git_sha())
     write_config_echo(cfg, out_path=run_dir / "diagnostics" / "config_echo.json")
+    # Also copy the original YAML config byte-for-byte for auditing
+    try:
+        dst_yaml = run_dir / "diagnostics" / "config_echo.yaml"
+        dst_yaml.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(args.config, dst_yaml)
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("CONFIG YAML ECHO WARN: %s", str(_exc))
     logger.debug(
         "CONFIG anchor=%s horizon=%s issuance_default=%s rates_constant=%s",
         cfg.anchor_date,

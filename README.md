@@ -19,7 +19,7 @@ deficits:
       2026: 1.0  # 1% of GDP
 ```
 
-Absolute level (USD millions per year):
+Absolute level (USD millions per year), anchor+index format:
 ```yaml
 deficits:
   frame: FY
@@ -28,8 +28,9 @@ deficits:
   additional_revenue:
     enabled: true
     mode: level
-    annual_level_usd_millions:
-      2026: 300000  # $300 billion
+    anchor_year: 2026
+    anchor_amount: 300000  # USD millions ($300 billion)
+    index: none            # or PCE/CPI to index over time
 ```
 
 Notes
