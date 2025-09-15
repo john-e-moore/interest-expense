@@ -320,20 +320,26 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
                 raise ValueError("deficits.additional_revenue.index must be one of: none, PCE, CPI")
         # Exclusivity checks
         if additional_revenue_enabled:
-            if additional_revenue_mode == "pct_gdp" and additional_revenue_annual_pct_gdp is None:
-                raise ValueError("additional_revenue.mode is pct_gdp but annual_pct_gdp missing")
-            if additional_revenue_mode == "level" and additional_revenue_annual_level_usd_millions is None:
-                raise ValueError("additional_revenue.mode is level but annual_level_usd_millions missing")
-            if additional_revenue_mode is None and (additional_revenue_annual_pct_gdp or additional_revenue_annual_level_usd_millions):
-                raise ValueError("additional_revenue provided without a valid mode")
-            if additional_revenue_annual_pct_gdp is not None and additional_revenue_annual_level_usd_millions is not None:
-                raise ValueError("Provide only one of annual_pct_gdp or annual_level_usd_millions for additional_revenue")
-            # If anchor/index provided, prefer it over legacy maps (do not error here)
-            if (additional_revenue_anchor_year is not None or additional_revenue_anchor_amount is not None or additional_revenue_index is not None):
+            anchor_present = (
+                additional_revenue_anchor_year is not None
+                or additional_revenue_anchor_amount is not None
+                or additional_revenue_index is not None
+            )
+            if anchor_present:
                 # Require completeness of anchor triplet
                 if additional_revenue_anchor_year is None or additional_revenue_anchor_amount is None or additional_revenue_index is None:
                     raise ValueError("additional_revenue anchor/index requires anchor_year, anchor_amount, and index together")
-                # Units note: when mode=level, anchor_amount is USD millions; when pct_gdp, it's percent
+                # With anchor+index present, skip legacy map requirements
+            else:
+                # Legacy paths require corresponding maps
+                if additional_revenue_mode == "pct_gdp" and additional_revenue_annual_pct_gdp is None:
+                    raise ValueError("additional_revenue.mode is pct_gdp but annual_pct_gdp missing")
+                if additional_revenue_mode == "level" and additional_revenue_annual_level_usd_millions is None:
+                    raise ValueError("additional_revenue.mode is level but annual_level_usd_millions missing")
+                if additional_revenue_mode is None and (additional_revenue_annual_pct_gdp or additional_revenue_annual_level_usd_millions):
+                    raise ValueError("additional_revenue provided without a valid mode")
+                if additional_revenue_annual_pct_gdp is not None and additional_revenue_annual_level_usd_millions is not None:
+                    raise ValueError("Provide only one of annual_pct_gdp or annual_level_usd_millions for additional_revenue")
 
     # Optional validations
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
