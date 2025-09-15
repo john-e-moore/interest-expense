@@ -22,7 +22,12 @@ from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from macro.deficits import build_primary_deficit_series, write_deficits_preview
-from macro.additional_revenue import build_additional_revenue_series, write_additional_revenue_preview
+from macro.additional_revenue import (
+    build_additional_revenue_series,
+    write_additional_revenue_preview,
+    build_inflation_index_preview,
+    write_inflation_index_preview,
+)
 from macro.other_interest import build_other_interest_series, write_other_interest_preview
 from diagnostics.qa import (
     run_qa,
@@ -223,6 +228,14 @@ def main() -> None:
         additional_series = add_series
         add_preview_path = run_dir / "diagnostics" / "additional_revenue_preview.csv"
         write_additional_revenue_preview(add_preview, add_preview_path)
+        # If anchor+index provided, also write inflation indexing diagnostics (per-year)
+        try:
+            years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
+            infl_prev = build_inflation_index_preview(cfg, years_needed, getattr(cfg, "additional_revenue_mode", ""))
+            if infl_prev is not None:
+                write_inflation_index_preview(infl_prev, run_dir / "diagnostics" / "inflation_index_preview.csv")
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("INFLATION INDEX PREVIEW WARN: %s", str(_exc))
         deficits_used = (deficits_series.reindex(idx).fillna(0.0) - add_series.reindex(idx).fillna(0.0)).rename("primary_deficit")
     else:
         deficits_used = deficits_series
