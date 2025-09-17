@@ -20,7 +20,7 @@ from macro.rates import build_month_index, ConstantRatesProvider, FiscalYearVari
 from macro.issuance import FixedSharesPolicy, TransitionalSharesPolicy, write_issuance_preview
 from engine.state import DebtState
 from engine.project import ProjectionEngine
-from annualize import annualize, write_annual_csvs
+from annualize import annualize, write_annual_csvs, write_overview_csvs
 from macro.gdp import build_gdp_function
 from macro.budget import (
     build_budget_component_series,
@@ -337,6 +337,19 @@ def main() -> None:
     monthly_for_annual = monthly_for_annual.assign(interest_total=monthly_for_annual["interest_total"] + monthly_for_annual.get("other_interest", 0.0))
     cy, fy = annualize(monthly_for_annual, gdp_model)
     p_cy, p_fy = write_annual_csvs(cy, fy, base_dir=str(run_dir))
+    # Write FY/CY overview spreadsheets (projection years covered by index)
+    try:
+        write_overview_csvs(
+            revenue_series,
+            outlays_series,
+            additional_series,
+            monthly_for_annual,
+            gdp_model,
+            cfg,
+            base_dir=str(run_dir),
+        )
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("OVERVIEW WRITE WARN: %s", str(_exc))
     print("Wrote annual CSVs:", p_cy, p_fy)
     logger.debug("ANNUALIZE DONE cy=%s fy=%s years_cy=%d years_fy=%d", str(p_cy), str(p_fy), len(cy), len(fy))
 
