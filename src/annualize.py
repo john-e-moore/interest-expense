@@ -104,10 +104,9 @@ def write_overview_csvs(
     else:
         df.index = pd.to_datetime(pd.DatetimeIndex(df.index)).to_period("M").to_timestamp()
 
-    # Interest includes 'other_interest' if present
+    # Interest should align with annual.csv which uses interest_total only.
+    # Do NOT add other_interest here to avoid double-counting versus annual.csv.
     interest_m = df["interest_total"].astype(float)
-    if "other_interest" in df.columns:
-        interest_m = interest_m + df["other_interest"].astype(float)
 
     # Total stock per month (marketable)
     stock_m = df[["stock_short", "stock_nb", "stock_tips"]].sum(axis=1).astype(float)
