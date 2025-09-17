@@ -22,7 +22,13 @@ from engine.state import DebtState
 from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
-from macro.deficits import build_primary_deficit_series, write_deficits_preview
+from macro.budget import (
+    build_budget_component_series,
+    build_deficits_preview_monthly,
+    build_deficits_preview_annual,
+    write_deficits_preview,
+    write_deficits_preview_annual,
+)
 from macro.additional_revenue import (
     build_additional_revenue_series,
     write_additional_revenue_preview,
@@ -239,11 +245,8 @@ def main() -> None:
         growth_fy = {y: 0.0 for y in years_needed if y >= anchor_fy}
     gdp_model = build_gdp_function(cfg.anchor_date, cfg.gdp_anchor_value_usd_millions, growth_fy)
 
-    deficits_series, deficits_preview = build_primary_deficit_series(cfg, gdp_model, idx)
-    deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
-    write_deficits_preview(deficits_preview, deficits_preview_path)
-
-    # Additional revenue (optional, gated by enabled flag): build and subtract from primary deficit
+    # Build revenue/outlays components and additional revenue (if any)
+    revenue_series, outlays_series, _components_preview = build_budget_component_series(cfg, gdp_model, idx)
     additional_series = None
     if bool(getattr(cfg, "additional_revenue_enabled", False)) and getattr(cfg, "additional_revenue_mode", None) is not None:
         add_series, add_preview = build_additional_revenue_series(cfg, gdp_model, idx)
@@ -282,9 +285,17 @@ def main() -> None:
                     logger.debug("INFL PREVIEW MIRROR WARN: %s", str(_exc2))
         except Exception as _exc:  # noqa: BLE001
             logger.debug("INFLATION INDEX PREVIEW WARN: %s", str(_exc))
-        deficits_used = (deficits_series.reindex(idx).fillna(0.0) - add_series.reindex(idx).fillna(0.0)).rename("primary_deficit")
-    else:
-        deficits_used = deficits_series
+    # Build expanded monthly deficits preview and annual aggregation
+    deficits_preview, base_series, adj_series = build_deficits_preview_monthly(
+        cfg, gdp_model, idx, revenue_series, outlays_series, additional_series
+    )
+    deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
+    write_deficits_preview(deficits_preview, deficits_preview_path)
+    deficits_preview_annual = build_deficits_preview_annual(deficits_preview)
+    write_deficits_preview_annual(deficits_preview_annual, run_dir / "diagnostics" / "deficits_preview_annual.csv")
+
+    # Series used by engine (adjusted primary deficit)
+    deficits_used = adj_series.rename("primary_deficit")
 
     # OTHER interest exogenous: build from config (default enabled)
     if getattr(cfg, "other_interest_enabled", True):
@@ -306,7 +317,7 @@ def main() -> None:
     # Enrich monthly trace with inputs for transparency (overwrite parquet written by engine)
     try:
         df_enriched = df.copy()
-        df_enriched["primary_deficit_base"] = deficits_series.reindex(df_enriched.index).values
+        df_enriched["primary_deficit_base"] = base_series.reindex(df_enriched.index).values
         if additional_series is not None:
             df_enriched["additional_revenue"] = additional_series.reindex(df_enriched.index).values
             df_enriched["primary_deficit_adj"] = deficits_used.reindex(df_enriched.index).values
