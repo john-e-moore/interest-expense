@@ -29,12 +29,13 @@ class MacroConfig:
     gdp_anchor_fy: int
     gdp_anchor_value_usd_millions: float
 
-    # Frame for deficits and reporting inputs
-    deficits_frame: FiscalFrame
+    # Frame for budget inputs (revenue/outlays shares)
+    budget_frame: FiscalFrame
 
-    # Optional annual primary deficits as percent of GDP by year (percent, not decimal)
-    # Interpreted in the frame specified by deficits_frame
-    deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
+    # Annual revenue and primary outlays as percent of GDP by year (percent, not decimal)
+    # Interpreted in the frame specified by budget_frame
+    budget_annual_revenue_pct_gdp: Dict[int, float]
+    budget_annual_outlays_pct_gdp: Dict[int, float]
 
     # Additional revenue offset (optional)
     # mode: "pct_gdp" or "level"; values keyed by FY/CY year based on deficits_frame
@@ -76,6 +77,11 @@ class MacroConfig:
     # bucket keys normalized to lowercase: short, nb, tips
     variable_rates_annual: Optional[Dict[str, Dict[int, float]]] = None
 
+    # Back-compat property aliases (read-only) to ease transition within codebase
+    @property
+    def deficits_frame(self) -> FiscalFrame:  # alias for legacy callers
+        return self.budget_frame
+
     def to_normalized_dict(self) -> Dict[str, object]:
         data = asdict(self)
         data["anchor_date"] = self.anchor_date.isoformat()
@@ -103,11 +109,13 @@ class MacroConfig:
             for k, m in self.variable_rates_annual.items():
                 vr[k] = {int(yy): float(val) for yy, val in m.items()}
             data["variable_rates_annual"] = vr
-        # Nest deficits fields for readability
-        if self.deficits_frame is not None:
-            deficits_block: Dict[str, object] = {"frame": self.deficits_frame}
-            if self.deficits_annual_pct_gdp is not None:
-                deficits_block["annual_pct_gdp"] = {int(k): float(v) for k, v in self.deficits_annual_pct_gdp.items()}
+        # Nest budget fields for readability
+        if self.budget_frame is not None:
+            budget_block: Dict[str, object] = {"frame": self.budget_frame}
+            if self.budget_annual_revenue_pct_gdp is not None:
+                budget_block["annual_revenue_pct_gdp"] = {int(k): float(v) for k, v in self.budget_annual_revenue_pct_gdp.items()}
+            if self.budget_annual_outlays_pct_gdp is not None:
+                budget_block["annual_outlays_pct_gdp"] = {int(k): float(v) for k, v in self.budget_annual_outlays_pct_gdp.items()}
             # Nest additional_revenue if configured
             if self.additional_revenue_mode is not None or self.additional_revenue_enabled:
                 add_rev: Dict[str, object] = {"enabled": bool(self.additional_revenue_enabled)}
@@ -124,8 +132,8 @@ class MacroConfig:
                     add_rev["anchor_amount"] = float(self.additional_revenue_anchor_amount)
                 if self.additional_revenue_index is not None:
                     add_rev["index"] = self.additional_revenue_index
-                deficits_block["additional_revenue"] = add_rev
-            data["deficits"] = deficits_block
+                budget_block["additional_revenue"] = add_rev
+            data["budget"] = budget_block
         # Nest other_interest for readability
         other_block: Dict[str, object] = {"enabled": self.other_interest_enabled}
         if self.other_interest_frame is not None:
@@ -261,17 +269,20 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
             gdp["annual_fy_growth_rate"], field="gdp.annual_fy_growth_rate"  # type: ignore[index]
         )
 
-    deficits = raw.get("deficits")
-    if not isinstance(deficits, dict) or "frame" not in deficits:
-        raise ValueError("deficits.frame must be provided and be 'FY' or 'CY'")
-    frame = str(deficits["frame"]).upper()
+    budget = raw.get("budget")
+    if not isinstance(budget, dict) or "frame" not in budget:
+        raise ValueError("budget.frame must be provided and be 'FY' or 'CY'")
+    frame = str(budget["frame"]).upper()
     if frame not in {"FY", "CY"}:
-        raise ValueError("deficits.frame must be 'FY' or 'CY'")
+        raise ValueError("budget.frame must be 'FY' or 'CY'")
 
-    deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
-    if isinstance(deficits.get("annual_pct_gdp"), dict):
-        # Percent values; keep as provided (finite), keyed by year in given frame
-        deficits_annual_pct_gdp = _validate_fy_growth_map(deficits["annual_pct_gdp"], field="deficits.annual_pct_gdp")
+    # Revenue and outlays shares (required)
+    if not isinstance(budget.get("annual_revenue_pct_gdp"), dict):
+        raise ValueError("budget.annual_revenue_pct_gdp must be provided as a mapping")
+    if not isinstance(budget.get("annual_outlays_pct_gdp"), dict):
+        raise ValueError("budget.annual_outlays_pct_gdp must be provided as a mapping")
+    budget_annual_revenue_pct_gdp = _validate_fy_growth_map(budget["annual_revenue_pct_gdp"], field="budget.annual_revenue_pct_gdp")
+    budget_annual_outlays_pct_gdp = _validate_fy_growth_map(budget["annual_outlays_pct_gdp"], field="budget.annual_outlays_pct_gdp")
 
     # Additional revenue parsing (optional)
     additional_revenue_mode: Optional[Literal["pct_gdp", "level"]] = None
@@ -282,7 +293,7 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
     additional_revenue_anchor_year: Optional[int] = None
     additional_revenue_anchor_amount: Optional[float] = None
     additional_revenue_index: Optional[Literal["none", "pce", "cpi"]] = None
-    add_rev = deficits.get("additional_revenue") if isinstance(deficits, dict) else None
+    add_rev = budget.get("additional_revenue") if isinstance(budget, dict) else None
     if isinstance(add_rev, dict):
         if "enabled" in add_rev:
             try:
@@ -293,31 +304,31 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         if mode_str in {"pct_gdp", "level"}:
             additional_revenue_mode = mode_str  # type: ignore[assignment]
         elif mode_str:
-            raise ValueError("deficits.additional_revenue.mode must be 'pct_gdp' or 'level'")
+            raise ValueError("budget.additional_revenue.mode must be 'pct_gdp' or 'level'")
         # Validate maps
         if isinstance(add_rev.get("annual_pct_gdp"), dict):
-            additional_revenue_annual_pct_gdp = _validate_fy_growth_map(add_rev["annual_pct_gdp"], field="deficits.additional_revenue.annual_pct_gdp")
+            additional_revenue_annual_pct_gdp = _validate_fy_growth_map(add_rev["annual_pct_gdp"], field="budget.additional_revenue.annual_pct_gdp")
         if isinstance(add_rev.get("annual_level_usd_millions"), dict):
-            additional_revenue_annual_level_usd_millions = _validate_fy_growth_map(add_rev["annual_level_usd_millions"], field="deficits.additional_revenue.annual_level_usd_millions")
+            additional_revenue_annual_level_usd_millions = _validate_fy_growth_map(add_rev["annual_level_usd_millions"], field="budget.additional_revenue.annual_level_usd_millions")
         # Anchor/index (optional)
         if "anchor_year" in add_rev:
             try:
                 additional_revenue_anchor_year = int(add_rev.get("anchor_year"))
             except Exception as exc:  # noqa: BLE001
-                raise ValueError("deficits.additional_revenue.anchor_year must be an integer") from exc
+                raise ValueError("budget.additional_revenue.anchor_year must be an integer") from exc
         if "anchor_amount" in add_rev:
             try:
                 additional_revenue_anchor_amount = float(add_rev.get("anchor_amount"))
             except Exception as exc:  # noqa: BLE001
-                raise ValueError("deficits.additional_revenue.anchor_amount must be a number") from exc
+                raise ValueError("budget.additional_revenue.anchor_amount must be a number") from exc
             if not _finite(additional_revenue_anchor_amount):
-                raise ValueError("deficits.additional_revenue.anchor_amount must be finite")
+                raise ValueError("budget.additional_revenue.anchor_amount must be finite")
         if "index" in add_rev:
             idx_val = str(add_rev.get("index", "")).strip().lower()
             if idx_val in {"none", "pce", "cpi"}:
                 additional_revenue_index = idx_val  # type: ignore[assignment]
             elif idx_val:
-                raise ValueError("deficits.additional_revenue.index must be one of: none, PCE, CPI")
+                raise ValueError("budget.additional_revenue.index must be one of: none, PCE, CPI")
         # Exclusivity checks
         if additional_revenue_enabled:
             anchor_present = (
@@ -407,8 +418,9 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         horizon_months=horizon_months,
         gdp_anchor_fy=gdp_anchor_fy,
         gdp_anchor_value_usd_millions=gdp_anchor_value,
-        deficits_frame=frame,  # type: ignore[arg-type]
-        deficits_annual_pct_gdp=deficits_annual_pct_gdp,
+        budget_frame=frame,  # type: ignore[arg-type]
+        budget_annual_revenue_pct_gdp=budget_annual_revenue_pct_gdp,
+        budget_annual_outlays_pct_gdp=budget_annual_outlays_pct_gdp,
         additional_revenue_mode=additional_revenue_mode,
         additional_revenue_annual_pct_gdp=additional_revenue_annual_pct_gdp,
         additional_revenue_annual_level_usd_millions=additional_revenue_annual_level_usd_millions,
