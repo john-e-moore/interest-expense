@@ -15,6 +15,8 @@ def annualize(monthly_df: pd.DataFrame, gdp_model: GDPModel) -> Tuple[pd.DataFra
 
     monthly_df must have index 'date' (MS) and column 'interest_total'.
     Returns (cy_df, fy_df) with columns: year, interest, gdp, pct_gdp.
+    If optional columns exist in monthly_df (e.g., 'additional_revenue'),
+    they are summed to annual frequency and included as additional columns.
     """
     if "interest_total" not in monthly_df.columns:
         raise ValueError("monthly_df must contain 'interest_total'")
@@ -30,6 +32,13 @@ def annualize(monthly_df: pd.DataFrame, gdp_model: GDPModel) -> Tuple[pd.DataFra
 
     cy = df.groupby("CY", as_index=False)["interest_total"].sum().rename(columns={"CY": "year", "interest_total": "interest"})
     fy = df.groupby("FY", as_index=False)["interest_total"].sum().rename(columns={"FY": "year", "interest_total": "interest"})
+
+    # Optionally aggregate additional revenue if present
+    if "additional_revenue" in df.columns:
+        cy_add = df.groupby("CY", as_index=False)["additional_revenue"].sum().rename(columns={"CY": "year"})
+        fy_add = df.groupby("FY", as_index=False)["additional_revenue"].sum().rename(columns={"FY": "year"})
+        cy = cy.merge(cy_add, on="year", how="left")
+        fy = fy.merge(fy_add, on="year", how="left")
 
     def _with_gdp(table: pd.DataFrame, frame: str) -> pd.DataFrame:
         out = table.copy()

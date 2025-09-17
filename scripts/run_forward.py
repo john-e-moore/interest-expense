@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+import shutil
 
 import pandas as pd
 
@@ -22,6 +23,12 @@ from engine.project import ProjectionEngine
 from annualize import annualize, write_annual_csvs
 from macro.gdp import build_gdp_function
 from macro.deficits import build_primary_deficit_series, write_deficits_preview
+from macro.additional_revenue import (
+    build_additional_revenue_series,
+    write_additional_revenue_preview,
+    build_inflation_index_preview,
+    write_inflation_index_preview,
+)
 from macro.other_interest import build_other_interest_series, write_other_interest_preview
 from diagnostics.qa import (
     run_qa,
@@ -53,6 +60,27 @@ def main() -> None:
     logger = setup_run_logger(run_dir / "run_forward.log", debug=args.debug)
     log_run_start(logger, run_dir=run_dir, config_path=args.config, git_sha=get_git_sha())
     write_config_echo(cfg, out_path=run_dir / "diagnostics" / "config_echo.json")
+    # Also copy the original YAML config byte-for-byte for auditing
+    try:
+        dst_yaml = run_dir / "diagnostics" / "config_echo.yaml"
+        dst_yaml.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(args.config, dst_yaml)
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("CONFIG YAML ECHO WARN: %s", str(_exc))
+    # Mirror config echoes to base diagnostics for tests expecting non-timestamped paths
+    try:
+        base_diag = Path(base_out) / "diagnostics"
+        base_diag.mkdir(parents=True, exist_ok=True)
+        # JSON
+        src_json = run_dir / "diagnostics" / "config_echo.json"
+        if src_json.exists():
+            shutil.copyfile(src_json, base_diag / "config_echo.json")
+        # YAML
+        src_yaml = run_dir / "diagnostics" / "config_echo.yaml"
+        if src_yaml.exists():
+            shutil.copyfile(src_yaml, base_diag / "config_echo.yaml")
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("CONFIG ECHO MIRROR WARN: %s", str(_exc))
     logger.debug(
         "CONFIG anchor=%s horizon=%s issuance_default=%s rates_constant=%s",
         cfg.anchor_date,
@@ -215,6 +243,49 @@ def main() -> None:
     deficits_preview_path = run_dir / "diagnostics" / "deficits_preview.csv"
     write_deficits_preview(deficits_preview, deficits_preview_path)
 
+    # Additional revenue (optional, gated by enabled flag): build and subtract from primary deficit
+    additional_series = None
+    if bool(getattr(cfg, "additional_revenue_enabled", False)) and getattr(cfg, "additional_revenue_mode", None) is not None:
+        add_series, add_preview = build_additional_revenue_series(cfg, gdp_model, idx)
+        additional_series = add_series
+        add_preview_path = run_dir / "diagnostics" / "additional_revenue_preview.csv"
+        try:
+            write_additional_revenue_preview(add_preview, add_preview_path)
+        except Exception:
+            # Fallback: if index contains non-serializable types, coerce date
+            ap = add_preview.copy()
+            if "date" in ap.columns:
+                ap["date"] = pd.to_datetime(ap["date"]).dt.strftime("%Y-%m-%d")
+            write_additional_revenue_preview(ap, add_preview_path)
+        # Mirror to base diagnostics
+        try:
+            base_diag = Path(base_out) / "diagnostics"
+            base_diag.mkdir(parents=True, exist_ok=True)
+            if add_preview_path.exists():
+                shutil.copyfile(add_preview_path, base_diag / "additional_revenue_preview.csv")
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("ADD REV PREVIEW MIRROR WARN: %s", str(_exc))
+        # If anchor+index provided, also write inflation indexing diagnostics (per-year)
+        try:
+            years_needed = sorted(set([d.year for d in idx] + [d.year + 1 for d in idx]))
+            infl_prev = build_inflation_index_preview(cfg, years_needed, getattr(cfg, "additional_revenue_mode", ""))
+            if infl_prev is not None:
+                infl_path = run_dir / "diagnostics" / "inflation_index_preview.csv"
+                write_inflation_index_preview(infl_prev, infl_path)
+                # Mirror
+                try:
+                    base_diag = Path(base_out) / "diagnostics"
+                    base_diag.mkdir(parents=True, exist_ok=True)
+                    if infl_path.exists():
+                        shutil.copyfile(infl_path, base_diag / "inflation_index_preview.csv")
+                except Exception as _exc2:  # noqa: BLE001
+                    logger.debug("INFL PREVIEW MIRROR WARN: %s", str(_exc2))
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("INFLATION INDEX PREVIEW WARN: %s", str(_exc))
+        deficits_used = (deficits_series.reindex(idx).fillna(0.0) - add_series.reindex(idx).fillna(0.0)).rename("primary_deficit")
+    else:
+        deficits_used = deficits_series
+
     # OTHER interest exogenous: build from config (default enabled)
     if getattr(cfg, "other_interest_enabled", True):
         other_series, other_preview = build_other_interest_series(cfg, gdp_model, idx)
@@ -226,15 +297,32 @@ def main() -> None:
 
     engine = ProjectionEngine(rates_provider=rp, issuance_policy=issuance)
     logger.debug("ENGINE START start=%s end=%s months=%d", idx[0], idx[-1], len(idx))
-    df = engine.run(idx, start_state, deficits_series, other, trace_out_path=run_dir / "diagnostics" / "monthly_trace.parquet")
+    trace_path = run_dir / "diagnostics" / "monthly_trace.parquet"
+    df = engine.run(idx, start_state, deficits_used, other, trace_out_path=trace_path)
     logger.debug("ENGINE END rows=%d cols=%d", len(df), df.shape[1])
     print(df.head(3))
     print(df.tail(3))
 
+    # Enrich monthly trace with inputs for transparency (overwrite parquet written by engine)
+    try:
+        df_enriched = df.copy()
+        df_enriched["primary_deficit_base"] = deficits_series.reindex(df_enriched.index).values
+        if additional_series is not None:
+            df_enriched["additional_revenue"] = additional_series.reindex(df_enriched.index).values
+            df_enriched["primary_deficit_adj"] = deficits_used.reindex(df_enriched.index).values
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            df_enriched.to_parquet(trace_path)
+        except Exception:
+            # Fallback to CSV if parquet engine not available
+            df_enriched.to_csv(trace_path.with_suffix(".csv"))
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("TRACE ENRICH WARN: %s", str(_exc))
+
     # Step 11: Annualization & % of GDP (reuse gdp_model above)
 
-    # Use interest including OTHER for totals
-    monthly_for_annual = df.copy()
+    # Use interest including OTHER for totals; include additional_revenue if present
+    monthly_for_annual = df_enriched.copy() if 'df_enriched' in locals() else df.copy()
     monthly_for_annual = monthly_for_annual.assign(interest_total=monthly_for_annual["interest_total"] + monthly_for_annual.get("other_interest", 0.0))
     cy, fy = annualize(monthly_for_annual, gdp_model)
     p_cy, p_fy = write_annual_csvs(cy, fy, base_dir=str(run_dir))

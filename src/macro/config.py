@@ -36,6 +36,23 @@ class MacroConfig:
     # Interpreted in the frame specified by deficits_frame
     deficits_annual_pct_gdp: Optional[Dict[int, float]] = None
 
+    # Additional revenue offset (optional)
+    # mode: "pct_gdp" or "level"; values keyed by FY/CY year based on deficits_frame
+    additional_revenue_mode: Optional[Literal["pct_gdp", "level"]] = None
+    additional_revenue_annual_pct_gdp: Optional[Dict[int, float]] = None
+    additional_revenue_annual_level_usd_millions: Optional[Dict[int, float]] = None
+    additional_revenue_enabled: bool = False
+
+    # Inflation indexing inputs (optional)
+    # Top-level inflation series (percent, not decimals): {FY: pct}
+    inflation_pce: Optional[Dict[int, float]] = None
+    inflation_cpi: Optional[Dict[int, float]] = None
+
+    # Additional revenue anchor/index configuration (optional)
+    additional_revenue_anchor_year: Optional[int] = None
+    additional_revenue_anchor_amount: Optional[float] = None
+    additional_revenue_index: Optional[Literal["none", "pce", "cpi"]] = None
+
     # Other interest (exogenous add-on to interest), default enabled
     other_interest_enabled: bool = True
     other_interest_frame: Optional[FiscalFrame] = None
@@ -63,6 +80,14 @@ class MacroConfig:
         data = asdict(self)
         data["anchor_date"] = self.anchor_date.isoformat()
         data["units"] = {"currency": "USD", "scale": "millions"}
+        # Emit inflation block for transparency
+        if self.inflation_pce is not None or self.inflation_cpi is not None:
+            infl: Dict[str, object] = {}
+            if self.inflation_pce is not None:
+                infl["pce"] = {int(k): float(v) for k, v in self.inflation_pce.items()}
+            if self.inflation_cpi is not None:
+                infl["cpi"] = {int(k): float(v) for k, v in self.inflation_cpi.items()}
+            data["inflation"] = infl
         # Name issuance keys for readability
         if self.issuance_default_shares is not None:
             s, n, t = self.issuance_default_shares
@@ -83,6 +108,23 @@ class MacroConfig:
             deficits_block: Dict[str, object] = {"frame": self.deficits_frame}
             if self.deficits_annual_pct_gdp is not None:
                 deficits_block["annual_pct_gdp"] = {int(k): float(v) for k, v in self.deficits_annual_pct_gdp.items()}
+            # Nest additional_revenue if configured
+            if self.additional_revenue_mode is not None or self.additional_revenue_enabled:
+                add_rev: Dict[str, object] = {"enabled": bool(self.additional_revenue_enabled)}
+                if self.additional_revenue_mode is not None:
+                    add_rev["mode"] = self.additional_revenue_mode
+                if self.additional_revenue_mode == "pct_gdp" and self.additional_revenue_annual_pct_gdp is not None:
+                    add_rev["annual_pct_gdp"] = {int(k): float(v) for k, v in self.additional_revenue_annual_pct_gdp.items()}
+                if self.additional_revenue_mode == "level" and self.additional_revenue_annual_level_usd_millions is not None:
+                    add_rev["annual_level_usd_millions"] = {int(k): float(v) for k, v in self.additional_revenue_annual_level_usd_millions.items()}
+                # Anchor/index fields
+                if self.additional_revenue_anchor_year is not None:
+                    add_rev["anchor_year"] = int(self.additional_revenue_anchor_year)
+                if self.additional_revenue_anchor_amount is not None:
+                    add_rev["anchor_amount"] = float(self.additional_revenue_anchor_amount)
+                if self.additional_revenue_index is not None:
+                    add_rev["index"] = self.additional_revenue_index
+                deficits_block["additional_revenue"] = add_rev
             data["deficits"] = deficits_block
         # Nest other_interest for readability
         other_block: Dict[str, object] = {"enabled": self.other_interest_enabled}
@@ -231,6 +273,74 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         # Percent values; keep as provided (finite), keyed by year in given frame
         deficits_annual_pct_gdp = _validate_fy_growth_map(deficits["annual_pct_gdp"], field="deficits.annual_pct_gdp")
 
+    # Additional revenue parsing (optional)
+    additional_revenue_mode: Optional[Literal["pct_gdp", "level"]] = None
+    additional_revenue_annual_pct_gdp: Optional[Dict[int, float]] = None
+    additional_revenue_annual_level_usd_millions: Optional[Dict[int, float]] = None
+    additional_revenue_enabled: bool = False
+    # Anchor/index fields
+    additional_revenue_anchor_year: Optional[int] = None
+    additional_revenue_anchor_amount: Optional[float] = None
+    additional_revenue_index: Optional[Literal["none", "pce", "cpi"]] = None
+    add_rev = deficits.get("additional_revenue") if isinstance(deficits, dict) else None
+    if isinstance(add_rev, dict):
+        if "enabled" in add_rev:
+            try:
+                additional_revenue_enabled = bool(add_rev.get("enabled", False))
+            except Exception:  # noqa: BLE001
+                additional_revenue_enabled = False
+        mode_str = str(add_rev.get("mode", "")).strip().lower()
+        if mode_str in {"pct_gdp", "level"}:
+            additional_revenue_mode = mode_str  # type: ignore[assignment]
+        elif mode_str:
+            raise ValueError("deficits.additional_revenue.mode must be 'pct_gdp' or 'level'")
+        # Validate maps
+        if isinstance(add_rev.get("annual_pct_gdp"), dict):
+            additional_revenue_annual_pct_gdp = _validate_fy_growth_map(add_rev["annual_pct_gdp"], field="deficits.additional_revenue.annual_pct_gdp")
+        if isinstance(add_rev.get("annual_level_usd_millions"), dict):
+            additional_revenue_annual_level_usd_millions = _validate_fy_growth_map(add_rev["annual_level_usd_millions"], field="deficits.additional_revenue.annual_level_usd_millions")
+        # Anchor/index (optional)
+        if "anchor_year" in add_rev:
+            try:
+                additional_revenue_anchor_year = int(add_rev.get("anchor_year"))
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError("deficits.additional_revenue.anchor_year must be an integer") from exc
+        if "anchor_amount" in add_rev:
+            try:
+                additional_revenue_anchor_amount = float(add_rev.get("anchor_amount"))
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError("deficits.additional_revenue.anchor_amount must be a number") from exc
+            if not _finite(additional_revenue_anchor_amount):
+                raise ValueError("deficits.additional_revenue.anchor_amount must be finite")
+        if "index" in add_rev:
+            idx_val = str(add_rev.get("index", "")).strip().lower()
+            if idx_val in {"none", "pce", "cpi"}:
+                additional_revenue_index = idx_val  # type: ignore[assignment]
+            elif idx_val:
+                raise ValueError("deficits.additional_revenue.index must be one of: none, PCE, CPI")
+        # Exclusivity checks
+        if additional_revenue_enabled:
+            anchor_present = (
+                additional_revenue_anchor_year is not None
+                or additional_revenue_anchor_amount is not None
+                or additional_revenue_index is not None
+            )
+            if anchor_present:
+                # Require completeness of anchor triplet
+                if additional_revenue_anchor_year is None or additional_revenue_anchor_amount is None or additional_revenue_index is None:
+                    raise ValueError("additional_revenue anchor/index requires anchor_year, anchor_amount, and index together")
+                # With anchor+index present, skip legacy map requirements
+            else:
+                # Legacy paths require corresponding maps
+                if additional_revenue_mode == "pct_gdp" and additional_revenue_annual_pct_gdp is None:
+                    raise ValueError("additional_revenue.mode is pct_gdp but annual_pct_gdp missing")
+                if additional_revenue_mode == "level" and additional_revenue_annual_level_usd_millions is None:
+                    raise ValueError("additional_revenue.mode is level but annual_level_usd_millions missing")
+                if additional_revenue_mode is None and (additional_revenue_annual_pct_gdp or additional_revenue_annual_level_usd_millions):
+                    raise ValueError("additional_revenue provided without a valid mode")
+                if additional_revenue_annual_pct_gdp is not None and additional_revenue_annual_level_usd_millions is not None:
+                    raise ValueError("Provide only one of annual_pct_gdp or annual_level_usd_millions for additional_revenue")
+
     # Optional validations
     issuance_default_shares: Optional[Tuple[float, float, float]] = None
     if isinstance(raw.get("issuance_default_shares"), dict):
@@ -282,6 +392,16 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
             except Exception:  # noqa: BLE001
                 issuance_transition_months = 6
 
+    # Inflation block (optional, top-level)
+    inflation_pce: Optional[Dict[int, float]] = None
+    inflation_cpi: Optional[Dict[int, float]] = None
+    if isinstance(raw.get("inflation"), dict):
+        infl = raw.get("inflation")
+        if isinstance(infl.get("pce"), dict):
+            inflation_pce = _validate_fy_growth_map(infl["pce"], field="inflation.pce")  # type: ignore[index]
+        if isinstance(infl.get("cpi"), dict):
+            inflation_cpi = _validate_fy_growth_map(infl["cpi"], field="inflation.cpi")  # type: ignore[index]
+
     return MacroConfig(
         anchor_date=anchor_date,
         horizon_months=horizon_months,
@@ -289,6 +409,15 @@ def load_macro_yaml(path: os.PathLike[str] | str) -> MacroConfig:
         gdp_anchor_value_usd_millions=gdp_anchor_value,
         deficits_frame=frame,  # type: ignore[arg-type]
         deficits_annual_pct_gdp=deficits_annual_pct_gdp,
+        additional_revenue_mode=additional_revenue_mode,
+        additional_revenue_annual_pct_gdp=additional_revenue_annual_pct_gdp,
+        additional_revenue_annual_level_usd_millions=additional_revenue_annual_level_usd_millions,
+        additional_revenue_enabled=additional_revenue_enabled,
+        additional_revenue_anchor_year=additional_revenue_anchor_year,
+        additional_revenue_anchor_amount=additional_revenue_anchor_amount,
+        additional_revenue_index=additional_revenue_index,  # type: ignore[arg-type]
+        inflation_pce=inflation_pce,
+        inflation_cpi=inflation_cpi,
         other_interest_enabled=other_interest_enabled,
         other_interest_frame=other_interest_frame,  # type: ignore[arg-type]
         other_interest_annual_pct_gdp=other_interest_annual_pct_gdp,
