@@ -8,6 +8,7 @@
 5) Sanity checks & logging
 6) Tests: unit + integration
 7) Migration docs and example config update
+8) FY & CY overview spreadsheets (budget + interest summary)
 
 ### M1 — Schema + loader (src/macro/config.py)
 - Replace `deficits` section with `budget`:
@@ -98,8 +99,49 @@ Acceptance criteria:
 Acceptance criteria:
 - README and example config are in sync with loader behavior; running the example works out of the box.
 
+### M8 — FY & CY overview spreadsheets (budget + interest summary)
+- Goal: Write `overview.csv` under both `fiscal_year/spreadsheets/` and `calendar_year/spreadsheets/` for forward projection years only.
+- Columns (in order):
+  - `year` (fiscal or calendar)
+  - `gdp_usd_bn`
+  - `gdp_growth_pct`
+  - `revenue_usd_bn`
+  - `revenue_pct_gdp`
+  - `primary_outlays_usd_bn`
+  - `primary_outlays_pct_gdp`
+  - `primary_deficit_usd_bn` (adjusted = outlays − revenue − additional_revenue)
+  - `primary_deficit_pct_gdp`
+  - `additional_revenue_usd_bn`
+  - `additional_revenue_pct_gdp`
+  - `interest_expense_usd_bn`
+  - `interest_expense_pct_gdp`
+  - `effective_interest_rate_pct`
+  - `pce_inflation_pct`
+- Implementation:
+  - Compute annual nominal GDP for each frame and `y/y` growth using the same frame mapping as diagnostics.
+  - Aggregate monthly `revenue_month_usd_mn`, `primary_outlays_month_usd_mn`, and `additional_revenue_month_usd_mn` to annual USD; convert to billions by dividing by 1_000.
+  - Compute adjusted primary deficit: `primary_outlays_annual − revenue_annual − additional_revenue_annual`. Also compute %GDP columns as `(usd / gdp) × 100`.
+  - Pull annual interest expense from engine outputs (annualized) and compute %GDP.
+  - Compute effective interest rate as `interest_expense_annual / average(debt_start_of_year, debt_end_of_year)`; reuse the helper used for `historical_effective_rates.csv` to ensure consistency.
+  - Pull PCE inflation as `y/y` percent from the PCE index aligned to the frame (FY or CY) consistent with diagnostics.
+  - Restrict rows to forward projection years; exclude any historical/calibration years.
+  - Writers:
+    - `write_budget_overview_annual(frame: FiscalFrame, ...) -> None` that emits the CSV for a given frame.
+    - Hook this writer from `scripts/run_forward.py` after existing annual spreadsheets are written for each frame.
+  - File names:
+    - `output/<run_id>/fiscal_year/spreadsheets/overview.csv`
+    - `output/<run_id>/calendar_year/spreadsheets/overview.csv`
+- Formatting & units:
+  - USD in billions rounded to 1 decimal; percentages rounded to 2 decimals.
+  - No missing values; fill zeros for `additional_revenue_*` when the feature is disabled.
+- Acceptance criteria:
+  - Both CSVs exist with the exact columns above and only projection years.
+  - `%GDP` columns equal `USD / GDP` within tolerance after rounding; identity holds: `primary_outlays = revenue + additional_revenue + primary_deficit`.
+  - Effective interest rate matches diagnostics series within 5 bps for overlapping years.
+  - PCE inflation aligns with the inflation preview for the same frame.
+
 ### Sequencing & effort
-1) M1 (loader) → 2) M2 (builders) → 3) M3 (wiring) → 4) M4 (diagnostics) → 5) M5 (sanity) → 6) M6 (tests) → 7) M7 (docs)
+1) M1 (loader) → 2) M2 (builders) → 3) M3 (wiring) → 4) M4 (diagnostics) → 5) M5 (sanity) → 6) M6 (tests) → 7) M7 (docs) → 8) M8 (overview spreadsheets)
 
 ### Risks & mitigations
 - Downstream code expecting `deficits_frame`: introduce a temporary alias property and refactor call sites in this feature.
@@ -107,6 +149,6 @@ Acceptance criteria:
 - FY vs CY aggregation subtleties: ensure `year_key` mapping uses `fiscal_year(...)` for FY and direct `.year` for CY consistently across monthly and annual.
 
 ### Definition of Done
-- New `budget` schema is accepted by loader; runs complete; diagnostics (monthly and annual) written; sanity checks active; tests pass; docs updated.
+- New `budget` schema is accepted by loader; runs complete; diagnostics (monthly and annual) written; FY & CY overview spreadsheets written; sanity checks active; tests pass; docs updated.
 
 
