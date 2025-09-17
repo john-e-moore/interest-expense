@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Literal, Optional, Tuple
@@ -30,12 +30,12 @@ class MacroConfig:
     gdp_anchor_value_usd_millions: float
 
     # Frame for budget inputs (revenue/outlays shares)
-    budget_frame: FiscalFrame
+    budget_frame: FiscalFrame = "FY"
 
     # Annual revenue and primary outlays as percent of GDP by year (percent, not decimal)
     # Interpreted in the frame specified by budget_frame
-    budget_annual_revenue_pct_gdp: Dict[int, float]
-    budget_annual_outlays_pct_gdp: Dict[int, float]
+    budget_annual_revenue_pct_gdp: Dict[int, float] = field(default_factory=dict)
+    budget_annual_outlays_pct_gdp: Dict[int, float] = field(default_factory=dict)
 
     # Additional revenue offset (optional)
     # mode: "pct_gdp" or "level"; values keyed by FY/CY year based on deficits_frame

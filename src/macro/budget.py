@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, Tuple, Optional
+import logging
 
 import pandas as pd
 
@@ -157,6 +158,80 @@ def build_deficits_preview_monthly(
         )
 
     preview = pd.DataFrame(rows)
+
+    # Sanity checks & guardrails (warn-level)
+    try:
+        logger = logging.getLogger("run")
+        # Range checks on annual shares per year
+        if not preview.empty:
+            annual_shares = (
+                preview.groupby(["frame", "year_key"], as_index=False)[
+                    [
+                        "revenue_pct_gdp",
+                        "primary_outlays_pct_gdp",
+                        "primary_deficit_adj_pct_gdp",
+                    ]
+                ].first()
+            )
+            for _, row in annual_shares.iterrows():
+                y = int(row["year_key"])
+                rv = float(row["revenue_pct_gdp"])
+                ou = float(row["primary_outlays_pct_gdp"])
+                da = float(row["primary_deficit_adj_pct_gdp"])
+                if not (10.0 <= rv <= 25.0):
+                    logger.warning("REVENUE_SHARE_RANGE frame=%s year=%d value=%.3f%%", cfg.deficits_frame, y, rv)
+                if not (15.0 <= ou <= 30.0):
+                    logger.warning("OUTLAYS_SHARE_RANGE frame=%s year=%s value=%.3f%%", cfg.deficits_frame, y, ou)
+                if abs(da) > 10.0:
+                    logger.warning("DEFICIT_SHARE_MAG frame=%s year=%s value=%.3f%%", cfg.deficits_frame, y, da)
+
+            # Identity checks using monthly sums per year
+            pm = preview.copy()
+            # Monthly sums per year
+            sums = pm.groupby(["frame", "year_key"], as_index=False)[
+                [
+                    "revenue_month_usd_mn",
+                    "primary_outlays_month_usd_mn",
+                    "additional_revenue_month_usd_mn",
+                    "primary_deficit_base_month_usd_mn",
+                    "primary_deficit_adj_month_usd_mn",
+                ]
+            ].sum()
+            # Month counts per year (FY/CY aware)
+            counts = pm.groupby(["frame", "year_key"], as_index=False).size().rename(columns={"size": "months"})
+            sums = sums.merge(counts, on=["frame", "year_key"], how="left")
+            for _, row in sums.iterrows():
+                y = int(row["year_key"])
+                months = int(row["months"])
+                rev_sum = float(row["revenue_month_usd_mn"])  # noqa: N806
+                out_sum = float(row["primary_outlays_month_usd_mn"])  # noqa: N806
+                add_sum = float(row["additional_revenue_month_usd_mn"])  # noqa: N806
+                base_sum = float(row["primary_deficit_base_month_usd_mn"])  # noqa: N806
+                adj_sum = float(row["primary_deficit_adj_month_usd_mn"])  # noqa: N806
+                tol_abs = 0.5  # USD mn
+                tol_rel = 1e-6
+                # Identities
+                if months >= 12:
+                    if abs((out_sum - rev_sum) - base_sum) > max(tol_abs, tol_rel * max(1.0, abs(base_sum))):
+                        logger.warning(
+                            "IDENTITY_MISMATCH_BASE frame=%s year=%d outlays-revenue=%.3f base=%.3f",
+                            cfg.deficits_frame,
+                            y,
+                            out_sum - rev_sum,
+                            base_sum,
+                        )
+                    if abs((base_sum - add_sum) - adj_sum) > max(tol_abs, tol_rel * max(1.0, abs(adj_sum))):
+                        logger.warning(
+                            "IDENTITY_MISMATCH_ADJ frame=%s year=%d base-additional=%.3f adj=%.3f",
+                            cfg.deficits_frame,
+                            y,
+                            base_sum - add_sum,
+                            adj_sum,
+                        )
+    except Exception:  # noqa: BLE001
+        # Do not fail run on diagnostics issues
+        pass
+
     return preview, base, adj
 
 
