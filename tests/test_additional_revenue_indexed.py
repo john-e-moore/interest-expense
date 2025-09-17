@@ -24,10 +24,10 @@ gdp:
   annual_fy_growth_rate:
     2025: 0.0
     2026: 0.0
-deficits:
+budget:
   frame: FY
-  annual_pct_gdp:
-    2025: 3.0
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
   additional_revenue:
     enabled: true
     mode: level
@@ -81,10 +81,10 @@ gdp:
   annual_fy_growth_rate:
     2025: 0.0
     2026: 0.0
-deficits:
+budget:
   frame: FY
-  annual_pct_gdp:
-    2025: 3.0
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
   additional_revenue:
     enabled: true
     mode: pct_gdp

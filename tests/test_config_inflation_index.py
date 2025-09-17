@@ -20,10 +20,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 30000000
-deficits:
+budget:
   frame: FY
-  annual_pct_gdp:
-    2026: 3.0
+  annual_revenue_pct_gdp: {2026: 18.0}
+  annual_outlays_pct_gdp: {2026: 21.0}
   additional_revenue:
     enabled: true
     mode: level
@@ -61,8 +61,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 30000000
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2026: 18.0}
+  annual_outlays_pct_gdp: {2026: 21.0}
   additional_revenue:
     enabled: true
     mode: level
@@ -92,8 +94,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 30000000
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2026: 18.0}
+  annual_outlays_pct_gdp: {2026: 21.0}
   additional_revenue:
     enabled: true
     mode: level

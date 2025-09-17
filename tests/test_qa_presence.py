@@ -67,8 +67,10 @@ gdp:
   annual_fy_growth_rate:
     2025: 4.0
     2026: 4.0
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 rates:
   type: constant
   values:

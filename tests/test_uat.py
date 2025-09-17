@@ -17,8 +17,10 @@ horizon_months: 12
 gdp:
   anchor_fy: 2024
   anchor_value_usd_millions: 30000000
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2024: 18.0}
+  annual_outlays_pct_gdp: {2024: 21.0}
 rates:
   type: constant
   values:

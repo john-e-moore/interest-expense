@@ -23,8 +23,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 30000000
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 issuance_default_shares:
   short: 0.2
   nb: 0.7
@@ -79,8 +81,10 @@ def test_missing_required_sections_raises(tmp_path: Path) -> None:
         """
 anchor_date: 2025-07-01
 horizon_months: 24
-deficits:
+budget:
   frame: CY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 """,
     )
     with pytest.raises(ValueError):
@@ -97,8 +101,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 100.0
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 issuance_default_shares:
   short: 0.5
   nb: 0.6
@@ -120,8 +126,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 100.0
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 rates:
   type: constant
   values:
@@ -146,8 +154,10 @@ gdp:
   anchor_value_usd_millions: 100.0
   annual_fy_growth_rate:
     bad_year: 3.0
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 """,
     )
     with pytest.raises(ValueError):
@@ -164,8 +174,10 @@ horizon_months: 24
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 100.0
-deficits:
+budget:
   frame: FY
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
 variable_rates_annual:
   short: 2.0  # must be mapping
 """,

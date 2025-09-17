@@ -19,10 +19,10 @@ horizon_months: 12
 gdp:
   anchor_fy: 2025
   anchor_value_usd_millions: 30000000
-deficits:
+budget:
   frame: FY
-  annual_pct_gdp:
-    2025: 3.0
+  annual_revenue_pct_gdp: {2025: 18.0}
+  annual_outlays_pct_gdp: {2025: 21.0}
   additional_revenue:
     enabled: true
     mode: level
